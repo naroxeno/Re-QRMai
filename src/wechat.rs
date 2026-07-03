@@ -7,6 +7,7 @@
 
 use crate::mouse::MouseController;
 use anyhow::{Context, Result};
+use log::{error, info};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -68,7 +69,7 @@ fi
     fs::set_permissions(&xdg_open, perms)
         .with_context(|| format!("设置可执行权限失败: {xdg_open:?}"))?;
 
-    println!("[Wechat] 已创建伪装的 xdg-open: {xdg_open:?}");
+    info!("[Wechat] 已创建伪装的 xdg-open: {xdg_open:?}");
     Ok(())
 }
 
@@ -81,7 +82,7 @@ fn spawn_fifo_listener(
     let (tx, rx) = mpsc::channel();
 
     thread::spawn(move || {
-        println!("[Wechat] FIFO 监听线程已启动");
+        info!("[Wechat] FIFO 监听线程已启动");
         while !stop_flag.load(Ordering::Relaxed) && fifo_path.exists() {
             let file = match fs::File::open(&fifo_path) {
                 Ok(f) => f,
@@ -97,14 +98,14 @@ fn spawn_fifo_listener(
                 if let Ok(url) = line {
                     let url = url.trim().to_string();
                     if !url.is_empty() {
-                        println!("[Wechat] 截获链接: {url}");
+                        info!("[Wechat] 截获链接: {url}");
                         let _ = tx.send(url);
                     }
                 }
             }
             thread::sleep(Duration::from_millis(200));
         }
-        println!("[Wechat] FIFO 监听线程已退出");
+        info!("[Wechat] FIFO 监听线程已退出");
     });
 
     rx
@@ -118,7 +119,7 @@ fn launch_wechat(wechat_bin: &str, fake_bin_dir: &Path) -> Result<Child> {
         fake_bin_dir.display(),
         std::env::var("PATH").unwrap_or_default()
     );
-    println!("[Wechat] 启动微信: dbus-run-session {wechat_bin}");
+    info!("[Wechat] 启动微信: dbus-run-session {wechat_bin}");
 
     Command::new("dbus-run-session")
         .arg(wechat_bin)
@@ -132,7 +133,7 @@ fn launch_wechat(wechat_bin: &str, fake_bin_dir: &Path) -> Result<Child> {
 // ── QR 解码（zedbar 纯 Rust）─────────────────────────────
 
 /// 使用 zedbar 解码 PNG 图片中的二维码
-fn decode_qr_from_bytes(data: &[u8]) -> Result<String> {
+pub fn decode_qr_from_bytes(data: &[u8]) -> Result<String> {
     let gray = image::load_from_memory(data)
         .context("无法解析图片")?
         .into_luma8();
@@ -147,7 +148,7 @@ fn decode_qr_from_bytes(data: &[u8]) -> Result<String> {
         if let Some(data) = symbol.data_string() {
             let qr_data = data.trim().to_string();
             if !qr_data.is_empty() {
-                println!("[Wechat] 二维码解码成功: {}...", &qr_data[..qr_data.len().min(50)]);
+                info!("[Wechat] 二维码解码成功: {}...", &qr_data[..qr_data.len().min(50)]);
                 return Ok(qr_data);
             }
         }
@@ -158,11 +159,11 @@ fn decode_qr_from_bytes(data: &[u8]) -> Result<String> {
 
 // ── URL 获取与二维码解码 ─────────────────────────────────
 
-fn fetch_and_decode(url: &str) -> Result<String> {
+pub fn fetch_and_decode(url: &str) -> Result<String> {
     let ua = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 \
               (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
 
-    println!("[Wechat] 请求页面: {}...", &url[..url.len().min(80)]);
+    info!("[Wechat] 请求页面: {}...", &url[..url.len().min(80)]);
 
     // 1. 请求微信打开的 HTML 页面
     let html = ureq::get(url)
@@ -193,7 +194,7 @@ fn fetch_and_decode(url: &str) -> Result<String> {
         let base = url.rsplit_once('/').map(|(b, _)| b).unwrap_or(url);
         format!("{base}/{img_src}")
     };
-    println!("[Wechat] 二维码图片: {}...", &img_url[..img_url.len().min(80)]);
+    info!("[Wechat] 二维码图片: {}...", &img_url[..img_url.len().min(80)]);
 
     // 3. 下载二维码图片
     let img_data = ureq::get(&img_url)
@@ -230,7 +231,7 @@ impl WechatHijack {
     /// 初始化劫持环境（优先从上次崩溃恢复）
     pub fn init(wechat_bin: &str) -> Result<Self> {
         if let Some(hijack) = Self::try_recover() {
-            println!("[Wechat] ♻ 已从上次会话恢复劫持环境");
+            info!("[Wechat] ♻ 已从上次会话恢复劫持环境");
             return Ok(hijack);
         }
         Self::create_fresh(wechat_bin)
@@ -253,7 +254,7 @@ impl WechatHijack {
         if !status.success() {
             anyhow::bail!("mkfifo 返回非零退出码");
         }
-        println!("[Wechat] 已创建 FIFO: {fifo_path:?}");
+        info!("[Wechat] 已创建 FIFO: {fifo_path:?}");
 
         create_fake_xdg_open(&fake_bin_dir, &fifo_path)?;
 
@@ -285,7 +286,7 @@ impl WechatHijack {
 
         // 检查微信进程是否仍在运行
         if !pid_is_alive(state.wechat_pid) {
-            println!("[Wechat] 上次的微信进程 (PID {}) 已退出，将创建新环境", state.wechat_pid);
+            info!("[Wechat] 上次的微信进程 (PID {}) 已退出，将创建新环境", state.wechat_pid);
             let _ = fs::remove_file(state_path);
             return None;
         }
@@ -297,7 +298,7 @@ impl WechatHijack {
         let xdg_open = fake_bin_dir.join("xdg-open");
 
         if !temp_dir.exists() || !fifo_path.exists() || !xdg_open.exists() {
-            println!("[Wechat] 上次的劫持环境文件不完整，将重建");
+            info!("[Wechat] 上次的劫持环境文件不完整，将重建");
             let _ = fs::remove_file(state_path);
             let _ = fs::remove_dir_all(&temp_dir);
             return None;
@@ -307,10 +308,10 @@ impl WechatHijack {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let url_rx = Mutex::new(spawn_fifo_listener(fifo_path.clone(), stop_flag.clone()));
 
-        println!("[Wechat] ♻ 已恢复劫持环境:");
-        println!("         微信 PID: {}", state.wechat_pid);
-        println!("         临时目录: {temp_dir:?}");
-        println!("         FIFO:     {fifo_path:?}");
+        info!("[Wechat] ♻ 已恢复劫持环境:");
+        info!("         微信 PID: {}", state.wechat_pid);
+        info!("         临时目录: {temp_dir:?}");
+        info!("         FIFO:     {fifo_path:?}");
 
         Some(Self {
             temp_dir,
@@ -332,7 +333,7 @@ impl WechatHijack {
             None => match &self.wechat_proc {
                 Some(proc) => proc.id(),
                 None => {
-                    eprintln!("[Wechat] 没有微信 PID 可保存");
+                    error!("[Wechat] 没有微信 PID 可保存");
                     return;
                 }
             },
@@ -346,9 +347,9 @@ impl WechatHijack {
         };
 
         if let Err(e) = fs::write(STATE_FILE, serde_json::to_string(&state).unwrap()) {
-            eprintln!("[Wechat] 保存状态文件失败: {e}");
+            error!("[Wechat] 保存状态文件失败: {e}");
         } else {
-            println!("[Wechat] 已保存劫持环境状态 → {STATE_FILE}");
+            info!("[Wechat] 已保存劫持环境状态 → {STATE_FILE}");
         }
     }
 
@@ -357,7 +358,7 @@ impl WechatHijack {
     /// 以劫持环境启动微信（仅在非恢复模式下启动）
     pub fn launch_wechat(&mut self) -> Result<()> {
         if self.recovered {
-            println!("[Wechat] 使用从崩溃中恢复的微信进程 (PID {:?})，无需重启", self.wechat_pid);
+            info!("[Wechat] 使用从崩溃中恢复的微信进程 (PID {:?})，无需重启", self.wechat_pid);
             return Ok(());
         }
 
@@ -400,19 +401,47 @@ impl WechatHijack {
         timeout_secs: u64,
     ) -> Result<String> {
         if !self.is_wechat_alive() {
-            println!("[Wechat] 微信进程已退出，正在重新启动...");
+            info!("[Wechat] 微信进程已退出，正在重新启动...");
             self.recovered = false;
             self.launch_wechat()?;
         }
 
         self.drain_queue();
 
-        println!("[Wechat] 点击 P1 ({p1:?}) 生成二维码");
+        info!("[Wechat] 点击 P1 ({p1:?}) 生成二维码");
         mouse.move_click(p1[0] as i32, p1[1] as i32, 100)?;
         thread::sleep(Duration::from_secs(2));
 
         let url = self.click_p2_and_wait(mouse, p2, timeout_secs)?;
         fetch_and_decode(&url)
+    }
+
+    /// 仅执行 P1 → P2 点击（扩展模式），不等待 FIFO
+    ///
+    /// 返回后由外部轮询 QR 缓存获取解码结果
+    pub fn click_p1p2(
+        &mut self,
+        mouse: &mut MouseController,
+        p1: [u32; 2],
+        p2: [u32; 2],
+    ) -> Result<()> {
+        if !self.is_wechat_alive() {
+            info!("[Wechat] 微信进程已退出，正在重新启动...");
+            self.recovered = false;
+            self.launch_wechat()?;
+        }
+
+        self.drain_queue();
+
+        info!("[Wechat] 点击 P1 ({p1:?}) 生成二维码");
+        mouse.move_click(p1[0] as i32, p1[1] as i32, 100)?;
+        thread::sleep(Duration::from_secs(2));
+
+        info!("[Wechat] 点击 P2 ({p2:?})");
+        mouse.move_click(p2[0] as i32, p2[1] as i32, 0)?;
+        mouse.move_click(p2[0] as i32, p2[1] as i32, 0)?;
+
+        Ok(())
     }
 
     fn click_p2_and_wait(
@@ -429,7 +458,7 @@ impl WechatHijack {
             } else {
                 String::new()
             };
-            println!("[Wechat] 点击 P2 ({p2:?}){label}");
+            info!("[Wechat] 点击 P2 ({p2:?}){label}");
 
             mouse.move_click(p2[0] as i32, p2[1] as i32, 0)?;
             mouse.move_click(p2[0] as i32, p2[1] as i32, 0)?;
@@ -443,7 +472,7 @@ impl WechatHijack {
             match rx.recv_timeout(wait) {
                 Ok(url) => return Ok(url),
                 Err(mpsc::RecvTimeoutError::Timeout) if attempt == 0 => {
-                    println!("[Wechat] 未获取到链接，重试点击 P2");
+                    info!("[Wechat] 未获取到链接，重试点击 P2");
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -469,7 +498,7 @@ impl WechatHijack {
     pub fn cleanup(&mut self, keep: bool) {
         if keep {
             self.save_state();
-            println!("[Wechat] 劫持环境已保留，下次启动将自动恢复");
+            info!("[Wechat] 劫持环境已保留，下次启动将自动恢复");
             return;
         }
 
@@ -479,11 +508,11 @@ impl WechatHijack {
         self.stop_flag.store(true, Ordering::Relaxed);
 
         if let Some(mut proc) = self.wechat_proc.take() {
-            println!("[Wechat] 正在终止微信进程...");
+            info!("[Wechat] 正在终止微信进程...");
             let _ = proc.kill();
             let _ = proc.wait();
         } else if let Some(pid) = self.wechat_pid {
-            println!("[Wechat] 正在终止微信进程 (PID {pid})...");
+            info!("[Wechat] 正在终止微信进程 (PID {pid})...");
             unsafe {
                 libc::kill(pid as i32, libc::SIGTERM);
             }
@@ -503,9 +532,9 @@ impl WechatHijack {
 
         if self.temp_dir.exists() {
             if let Err(e) = fs::remove_dir_all(&self.temp_dir) {
-                eprintln!("[Wechat] 清理临时目录失败: {e}");
+                error!("[Wechat] 清理临时目录失败: {e}");
             } else {
-                println!("[Wechat] 已清理临时目录");
+                info!("[Wechat] 已清理临时目录");
             }
         }
     }

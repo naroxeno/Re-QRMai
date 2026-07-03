@@ -1,11 +1,11 @@
 {
   "p1": [
-    613,
+    1892,
     1407
   ],
   "p2": [
-    174,
-    1300
+    1453,
+    1152
   ],
   "token": "qrmai",
   "host": "0.0.0.0",
@@ -34,5 +34,6 @@
   "skin_index": 0,
   "skin_images": [],
   "p1_image": "p1_user.png",
-  "p2_image": "p2_user.png"
+  "p2_image": "p2_user.png",
+  "capture_mode": "hijack"
 }

@@ -340,26 +340,81 @@
                 </div>
             </mdui-card>
 
-            <!-- Linux 设置卡片 -->
-            {% if is_linux %}
+            <!-- 二维码获取方式 设置卡片 -->
             <mdui-card>
                 <div style="padding: 24px;">
-                    <h2>🐧 Linux 设置</h2>
+                    <h2>{% if is_linux %}🐧{% else %}🔗{% endif %} 二维码获取方式</h2>
                     <div class="setting-description">
-                        Linux 平台专用的微信相关配置。通过拦截微信打开的链接获取二维码。
+                        选择如何捕获微信打开的二维码链接
                     </div>
                     <form method="post" action="/settings" class="setting-form">
-                        <mdui-text-field label="微信可执行文件路径" name="wechat_bin"
-                            value="{{ config.wechat_bin }}"
-                            helper="Linux 微信客户端的绝对路径"></mdui-text-field>
-                        <mdui-text-field label="链接等待超时(秒)" name="wechat_url_timeout"
-                            value="{{ config.wechat_url_timeout }}" type="number"
-                            helper="等待微信打开链接的最长时间"></mdui-text-field>
-                        <mdui-button type="submit" variant="filled">保存 Linux 设置</mdui-button>
+                        {% if is_linux %}
+                        <label>捕获模式</label>
+                        <mdui-segmented-button-group selects="single"
+                            value="{{ config.capture_mode }}" name="capture_mode"
+                            id="captureModeGroup">
+                            <mdui-segmented-button value="hijack">
+                                🪝 xdg-open 劫持
+                            </mdui-segmented-button>
+                            <mdui-segmented-button value="extension">
+                                🧩 浏览器扩展
+                            </mdui-segmented-button>
+                        </mdui-segmented-button-group>
+                        <input type="hidden" name="capture_mode" id="captureModeInput"
+                            value="{{ config.capture_mode }}">
+
+                        <div id="hijackFields" style="margin-top: 16px; display: {{ 'block' if config.capture_mode == 'hijack' else 'none' }};">
+                            <mdui-text-field label="微信可执行文件路径" name="wechat_bin"
+                                value="{{ config.wechat_bin }}"
+                                helper="Linux 微信客户端的绝对路径"></mdui-text-field>
+                            <mdui-text-field label="链接等待超时(秒)" name="wechat_url_timeout"
+                                value="{{ config.wechat_url_timeout }}" type="number"
+                                helper="等待微信打开链接的最长时间"></mdui-text-field>
+                        </div>
+                        {% else %}
+                        <p style="color: #666; font-size: 14px;">
+                            当前平台仅支持「浏览器扩展」方式。请安装对应浏览器的扩展后使用。
+                        </p>
+                        {% endif %}
+
+                        <mdui-button type="submit" variant="filled" style="margin-top: 16px;">
+                            保存设置
+                        </mdui-button>
                     </form>
                 </div>
             </mdui-card>
-            {% endif %}
+
+            <!-- 浏览器扩展安装说明 -->
+            <mdui-card>
+                <div style="padding: 24px;">
+                    <h2>🧩 浏览器扩展</h2>
+                    <div class="setting-description">
+                        安装浏览器扩展后，微信打开的二维码链接会被自动拦截并转发到服务端。<br>
+                        支持 Chrome / Edge / Firefox。
+                    </div>
+
+                    <div style="margin-bottom: 12px;">
+                        <strong>安装步骤：</strong>
+                        <ol style="margin: 8px 0 0 20px; font-size: 14px; color: #555;">
+                            <li>下载扩展包：
+                                <a href="/dist/extension-chrome.zip" target="_blank">Chrome</a>
+                                &nbsp;|&nbsp;
+                                <a href="/dist/extension-firefox.zip" target="_blank">Firefox</a>
+                            </li>
+                            <li>解压到本地目录</li>
+                            <li>打开浏览器扩展管理页面，开启「开发者模式」</li>
+                            <li>点击「加载已解压的扩展」，选择解压后的目录</li>
+                        </ol>
+                    </div>
+
+                    <div style="padding: 12px; background: #f5f5f5; border-radius: 6px; font-size: 13px;">
+                        <strong>扩展配置参数：</strong><br>
+                        服务端地址: <code>{{ config.host }}:{{ config.port }}</code><br>
+                        路由前缀: <code>{{ config.qr_route }}</code><br>
+                        访问令牌: <code>{{ config.token }}</code>
+                    </div>
+                </div>
+            </mdui-card>
         </div>
 
         <mdui-card style="margin-top: 24px;">
@@ -395,6 +450,23 @@
                 const fields = document.getElementById('customSkinFields');
                 fields.style.display = (this.value === 'custom') ? 'block' : 'none';
             });
+
+        // ================================================================
+        // 捕获模式切换（劫持 / 扩展）
+        // ================================================================
+        const captureGroup = document.getElementById('captureModeGroup');
+        if (captureGroup) {
+            captureGroup.addEventListener('change', function () {
+                // 同步隐藏 input（确保 FormData 收集到值）
+                const hidden = document.getElementById('captureModeInput');
+                if (hidden) hidden.value = this.value;
+
+                const hijackFields = document.getElementById('hijackFields');
+                if (hijackFields) {
+                    hijackFields.style.display = (this.value === 'hijack') ? 'block' : 'none';
+                }
+            });
+        }
 
         // ================================================================
         // 表单提交

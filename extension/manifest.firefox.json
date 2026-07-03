@@ -1,0 +1,30 @@
+{
+  "manifest_version": 2,
+  "name": "QRMai Bridge",
+  "version": "1.0.0",
+  "description": "拦截外部应用打开的二维码链接，转发到 QRMai 服务端处理",
+  "permissions": [
+    "webNavigation",
+    "storage",
+    "tabs",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": false
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": false
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "qrmai-bridge@local",
+      "strict_min_version": "68.0"
+    }
+  },
+  "icons": {
+    "128": "icon.png"
+  }
+}

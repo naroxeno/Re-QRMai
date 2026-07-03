@@ -1,6 +1,7 @@
 //! 基于 OpenCV 的 P1/P2 模板匹配位置自动识别
 
 use anyhow::{Context, Result};
+use log::{error, info};
 use opencv::core::{self, Mat, Point, Size, Vector};
 use opencv::imgcodecs;
 use opencv::prelude::*;
@@ -104,13 +105,13 @@ pub fn get_template_path(img_dir: &Path, name: &str) -> Option<std::path::PathBu
     let user_path = img_dir.join(format!("{name}_user.png"));
     let dev_path = img_dir.join(format!("{name}.png"));
     if user_path.is_file() {
-        println!("[Detect] 使用用户模板: {user_path:?}");
+        info!("[Detect] 使用用户模板: {user_path:?}");
         Some(user_path)
     } else if dev_path.is_file() {
-        println!("[Detect] 使用开发者模板: {dev_path:?}");
+        info!("[Detect] 使用开发者模板: {dev_path:?}");
         Some(dev_path)
     } else {
-        eprintln!("[Detect] 未找到模板图 {name}");
+        error!("[Detect] 未找到模板图 {name}");
         None
     }
 }
@@ -140,25 +141,160 @@ pub fn detect_p1p2(
     Ok((p1, p2))
 }
 
-/// Linux 屏幕截图（grim → PNG → OpenCV Mat）
+// ── 跨平台屏幕截图 ────────────────────────────────────────
+//
+// 各平台使用原生 crate 截图，统一转为灰度 OpenCV Mat 返回
+
+/// RGBA 像素 → PNG 字节 → OpenCV 灰度 Mat（各平台共用）
+fn rgba_to_gray_mat(rgba: &[u8], width: u32, height: u32) -> Result<Mat> {
+    let img = image::RgbaImage::from_raw(width, height, rgba.to_vec())
+        .context("截图像素数据尺寸不匹配")?;
+    let gray = image::DynamicImage::ImageRgba8(img).into_luma8();
+
+    let mut png_buf = Vec::new();
+    gray.write_to(
+        &mut std::io::Cursor::new(&mut png_buf),
+        image::ImageFormat::Png,
+    )?;
+
+    let buf = Vector::<u8>::from_slice(&png_buf);
+    let mat = imgcodecs::imdecode(&buf, imgcodecs::IMREAD_GRAYSCALE)
+        .context("无法解码截图为 OpenCV Mat")?;
+
+    info!("[Detect] 截图成功: {}x{}", mat.cols(), mat.rows());
+    Ok(mat)
+}
+
+// ── Linux: grim-rs ──────────────────────────────────────
+
+#[cfg(target_os = "linux")]
 pub fn capture_screen() -> Result<Mat> {
-    use std::process::Command;
+    use grim_rs::Grim;
 
-    let output = Command::new("grim")
-        .arg("-")
-        .output()
-        .context("grim 截图失败（请安装 grim）")?;
+    let mut grim = Grim::new().context("初始化 grim-rs 失败")?;
+    let result = grim.capture_all().context("截图失败：请检查显示服务是否运行")?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("grim 截图失败: {stderr}");
+    let (w, h) = (result.width(), result.height());
+    rgba_to_gray_mat(result.data(), w, h)
+}
+
+// ── Windows: windows-capture ────────────────────────────
+
+#[cfg(target_os = "windows")]
+pub fn capture_screen() -> Result<Mat> {
+    use std::sync::{Arc, Mutex};
+
+    use windows_capture::capture::{Context, GraphicsCaptureApiHandler};
+    use windows_capture::frame::Frame;
+    use windows_capture::graphics_capture_api::InternalCaptureControl;
+    use windows_capture::graphics_capture_picker::GraphicsCapturePicker;
+    use windows_capture::settings::{
+        ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
+        MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings,
+    };
+
+    // 共享状态：在 handler 回调中写入截图数据
+    let png_data: Arc<Mutex<Option<(Vec<u8>, u32, u32)>>> = Arc::new(Mutex::new(None));
+    let png_clone = png_data.clone();
+
+    struct OneShot {
+        buffer: Arc<Mutex<Option<(Vec<u8>, u32, u32)>>>,
+        width: u32,
+        height: u32,
     }
 
-    // 从内存 PNG 解码为 OpenCV Mat
-    let buf = Vector::<u8>::from_slice(&output.stdout);
-    let img = imgcodecs::imdecode(&buf, imgcodecs::IMREAD_GRAYSCALE)
-        .context("无法解码截图")?;
+    impl GraphicsCaptureApiHandler for OneShot {
+        type Flags = (u32, u32);
+        type Error = Box<dyn std::error::Error + Send + Sync>;
 
-    println!("[Detect] 截图成功: {}x{}", img.cols(), img.rows());
-    Ok(img)
+        fn new(ctx: Context<Self::Flags>) -> Result<Self, Self::Error> {
+            Ok(Self {
+                buffer: png_clone,
+                width: ctx.flags.0,
+                height: ctx.flags.1,
+            })
+        }
+
+        fn on_frame_arrived(
+            &mut self,
+            frame: &mut Frame,
+            control: InternalCaptureControl,
+        ) -> Result<(), Self::Error> {
+            let rgba = frame.buffer()?.to_vec();
+            *self.buffer.lock().unwrap() = Some((rgba, self.width, self.height));
+            control.stop();
+            Ok(())
+        }
+
+        fn on_closed(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    // 弹出选择器让用户选择捕获目标（屏幕或窗口）
+    let item = GraphicsCapturePicker::pick_item().context("无法打开捕获选择器")?;
+    let Some(item) = item else {
+        anyhow::bail!("未选择捕获目标");
+    };
+    let (width, height) = item.size().context("无法获取捕获目标尺寸")?;
+
+    let settings = Settings::new(
+        item,
+        CursorCaptureSettings::Default,
+        DrawBorderSettings::Default,
+        SecondaryWindowSettings::Default,
+        MinimumUpdateIntervalSettings::Default,
+        DirtyRegionSettings::Default,
+        ColorFormat::Rgba8,
+        (width as i32, height as i32),
+    );
+
+    // start() 阻塞直到 on_frame_arrived 调用 control.stop()
+    OneShot::start(settings).map_err(|e| anyhow::anyhow!("截图失败: {e}"))?;
+
+    let (rgba, w, h) = png_data
+        .lock()
+        .unwrap()
+        .take()
+        .context("未获取到截图数据")?;
+
+    rgba_to_gray_mat(&rgba, w, h)
+}
+
+// ── macOS: screencapturekit ─────────────────────────────
+
+#[cfg(target_os = "macos")]
+pub fn capture_screen() -> Result<Mat> {
+    use screencapturekit::screenshot_manager::SCScreenshotManager;
+    use screencapturekit::shareable_content::SCShareableContent;
+    use screencapturekit::stream::configuration::SCStreamConfiguration;
+    use screencapturekit::stream::content_filter::SCContentFilter;
+
+    // 获取可共享内容（显示器列表）
+    let content = SCShareableContent::get().context("无法获取显示器列表")?;
+    let displays = content.displays();
+    if displays.is_empty() {
+        anyhow::bail!("未找到可捕获的显示器");
+    }
+
+    let display = &displays[0];
+    let width = display.width();
+    let height = display.height();
+
+    // 创建内容过滤器（捕获整个显示器，不排除任何窗口）
+    let filter = SCContentFilter::new(display).context("无法创建内容过滤器")?;
+
+    // 配置流参数
+    let config = SCStreamConfiguration::new();
+    config.set_width(width);
+    config.set_height(height);
+    config.set_pixel_format(screencapturekit::stream::configuration::PixelFormat::BGRA8888);
+
+    // 截图
+    let img = SCScreenshotManager::capture_image(&filter, &config)
+        .context("截屏失败")?;
+    let bgra = img.bgra_data().context("无法读取截图像素")?;
+
+    // BGRA → 灰度 Mat（blue/red 通道交换不影响灰度转换结果）
+    rgba_to_gray_mat(bgra, width, height)
 }
