@@ -1,0 +1,45 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Rust Bundler
+      uses: julcst/rust-bundler@v0.0.2
+      with: # Name of the binary to bundle (without extension). Auto-discovered from Cargo.toml if not provided.
+        binary-name: # optional, default is 
+    # Space-separated list of files or folders to include in the bundle
+        include-files: # optional, default is 
+    # Name of the output bundle (without extension, platform suffix will be added)
+        output-name: # optional, default is 
+    # Working directory (project root). Binary will be auto-discovered in target/release or target/debug.
+        working-directory: # optional, default is .
+    # Enable macOS code signing (requires proper keychain setup)
+        macos-sign: # optional, default is false
+    # macOS code signing identity
+        macos-sign-identity: # optional, default is 
+    # macOS bundle identifier (e.g., com.example.app)
+        macos-bundle-id: # optional, default is 
+    # macOS application display name
+        macos-app-name: # optional, default is 
+    # Path to icon file (PNG format recommended, will be converted for each platform)
+        icon-path: # optional, default is 
+    # Path to Cargo.toml for extracting metadata (name, version, description, authors)
+        cargo-toml-path: # optional, default is 
+    # Build profile to use (e.g., release, debug, dev, or custom profile name). Defaults to release.
+        profile: # optional, default is release
+    # Target triple for cross-compilation (e.g., x86_64-unknown-linux-gnu). Optional.
+        target: # optional, default is 
+        
