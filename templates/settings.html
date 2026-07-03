@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QRMai Settings</title>
+    <link rel="stylesheet" href="https://unpkg.com/mdui@2/mdui.css" />
+    <script src="https://unpkg.com/mdui@2/mdui.global.js"></script>
+    <style>
+        .setting-description {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 16px;
+        }
+
+        mdui-text-field,
+        mdui-switch,
+        mdui-segmented-button-group {
+            display: block;
+            margin-bottom: 16px;
+        }
+
+        mdui-switch {
+            margin-top: 8px;
+        }
+
+        /* 皮肤预览缩略图 */
+        .skin-preview {
+            width: 80px;
+            height: 80px;
+            object-fit: cover;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            margin: 4px;
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+        .skin-preview:hover {
+            border-color: #4a90d9;
+        }
+        .skin-preview.selected {
+            border-color: #43a047;
+            box-shadow: 0 0 6px rgba(67, 160, 71, 0.4);
+        }
+
+        .skin-item {
+            display: inline-block;
+            position: relative;
+            margin: 4px;
+        }
+
+        .skin-delete-btn {
+            position: absolute;
+            top: -4px;
+            right: -4px;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #e53935;
+            color: #fff;
+            border: none;
+            font-size: 12px;
+            line-height: 20px;
+            text-align: center;
+            cursor: pointer;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .skin-item:hover .skin-delete-btn {
+            opacity: 1;
+        }
+
+        .upload-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .upload-status {
+            font-size: 13px;
+            color: #888;
+        }
+
+        .template-preview {
+            max-width: 120px;
+            max-height: 60px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        /* 移动端优化 */
+        @media (max-width: 768px) {
+            .settings-grid {
+                grid-template-columns: 1fr !important;
+                gap: 16px !important;
+            }
+
+            mdui-card {
+                margin: 8px !important;
+            }
+
+            .setting-description {
+                font-size: 13px;
+            }
+        }
+
+        .logout-btn {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+
+<body>
+    <mdui-container>
+        <mdui-button id="logoutBtn" class="logout-btn" variant="outlined">登出</mdui-button>
+
+        <div class="settings-grid"
+            style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px;">
+            <!-- 基本设置卡片 -->
+            <mdui-card>
+                <div style="padding: 24px;">
+                    <h2>基本设置</h2>
+                    <div class="setting-description">
+                        配置 QRMai 的基本参数。
+                    </div>
+                    <form method="post" action="/settings" class="setting-form">
+                        <mdui-text-field label="访问令牌" name="token" value="{{ config.token }}"
+                            helper="访问二维码页面所需的令牌"></mdui-text-field>
+                        <mdui-text-field label="二维码访问路径" name="qr_route" value="{{ config.qr_route }}"
+                            helper="二维码服务的访问路径（例如：/qrmai, /qrcode）"></mdui-text-field>
+                        <mdui-text-field label="服务器地址" name="host" value="{{ config.host }}"
+                            helper="设置为0.0.0.0可内网访问"></mdui-text-field>
+                        <mdui-text-field label="服务器端口" name="port" value="{{ config.port }}" type="number"
+                            helper="服务器监听的端口号"></mdui-text-field>
+                        <mdui-text-field label="二维码缓存时间(秒)" name="cache_duration"
+                            value="{{ config.cache_duration }}" type="number"
+                            helper="二维码缓存时间，单位为秒"></mdui-text-field>
+                        <mdui-button type="submit" variant="filled">保存基本设置</mdui-button>
+                    </form>
+                </div>
+            </mdui-card>
+
+            <!-- 应用设置卡片 -->
+            <mdui-card>
+                <div style="padding: 24px;">
+                    <h2>应用设置</h2>
+                    <div class="setting-description">
+                        配置 QRMai 的应用程序相关参数。
+                    </div>
+                    <form method="post" action="/settings" class="setting-form">
+                        <label for="standalone_mode">舞萌丨中二公众号是否使用独立窗口显示</label>
+                        <mdui-switch name="standalone_mode" value="true" {% if config.standalone_mode
+                            %}checked{% endif %}></mdui-switch>
+
+                        <label for="skin_format">皮肤格式</label>
+                        <mdui-segmented-button-group selects="single" value="{{ config.skin_format }}"
+                            name="skin_format">
+                            <mdui-segmented-button value="new">新版皮肤</mdui-segmented-button>
+                            <mdui-segmented-button value="old">旧版皮肤</mdui-segmented-button>
+                            <mdui-segmented-button value="custom">自定义皮肤</mdui-segmented-button>
+                        </mdui-segmented-button-group>
+
+                        <div id="customSkinFields" style="display: {{ 'block' if config.skin_format == 'custom' else 'none' }};">
+                            <mdui-text-field label="皮肤路径" name="custom_skin_path"
+                                value="{{ config.custom_skin_path }}"
+                                helper="自定义皮肤的图片位置"></mdui-text-field>
+                            <mdui-text-field label="二维码大小" name="custom_skin_qrcode_size"
+                                value="{{ config.custom_skin_qrcode_size }}"
+                                helper="自定义皮肤的二维码大小"></mdui-text-field>
+                            <mdui-text-field label="二维码坐标" name="custom_skin_qrcode_point"
+                                value="{{ config.custom_skin_qrcode_point | join(",") }}"
+                                helper="自定义皮肤的二维码坐标"></mdui-text-field>
+                        </div>
+
+                        <mdui-button type="submit" variant="filled">保存应用设置</mdui-button>
+                    </form>
+                </div>
+            </mdui-card>
+
+            <!-- 模板图片卡片 -->
+            <mdui-card>
+                <div style="padding: 24px;">
+                    <h2>🖼️ 模板图片</h2>
+                    <div class="setting-description">
+                        上传 P1/P2 的截图作为模板，用于 OpenCV 自动识别位置。<br>
+                        上传后覆盖默认模板，删除用户模板则回退到开发者默认模板。
+                    </div>
+
+                    <!-- P1 模板 -->
+                    <div style="margin-bottom: 20px;">
+                        <strong>P1 — 生成二维码按钮</strong>
+                        <div class="upload-row">
+                            <img id="p1Preview" class="template-preview"
+                                src="{% if config.p1_image %}/img/p1_user.png{% else %}/img/p1.png{% endif %}"
+                                alt="P1 模板"
+                                onerror="this.style.display='none'"
+                                style="display: inline;">
+                            <input type="file" id="p1FileInput" accept="image/png" style="display:none;">
+                            <mdui-button id="p1UploadBtn" variant="outlined" type="button">
+                                📤 上传 P1 模板
+                            </mdui-button>
+                            <mdui-button id="p1DeleteBtn" variant="text" type="button"
+                                style="display: {% if config.p1_image %}inline-flex{% else %}none{% endif %};">
+                                🗑 删除
+                            </mdui-button>
+                            <span class="upload-status" id="p1Status"></span>
+                        </div>
+                    </div>
+
+                    <!-- P2 模板 -->
+                    <div>
+                        <strong>P2 — 二维码消息</strong>
+                        <div class="upload-row">
+                            <img id="p2Preview" class="template-preview"
+                                src="{% if config.p2_image %}/img/p2_user.png{% else %}/img/p2.png{% endif %}"
+                                alt="P2 模板"
+                                onerror="this.style.display='none'"
+                                style="display: inline;">
+                            <input type="file" id="p2FileInput" accept="image/png" style="display:none;">
+                            <mdui-button id="p2UploadBtn" variant="outlined" type="button">
+                                📤 上传 P2 模板
+                            </mdui-button>
+                            <mdui-button id="p2DeleteBtn" variant="text" type="button"
+                                style="display: {% if config.p2_image %}inline-flex{% else %}none{% endif %};">
+                                🗑 删除
+                            </mdui-button>
+                            <span class="upload-status" id="p2Status"></span>
+                        </div>
+                    </div>
+
+                </div>
+            </mdui-card>
+
+            <!-- 皮肤管理卡片 -->
+            <mdui-card>
+                <div style="padding: 24px;">
+                    <h2>🎨 皮肤管理</h2>
+                    <div class="setting-description">
+                        上传多个皮肤图片，可选择随机切换或固定使用某一个。
+                    </div>
+
+                    <!-- 皮肤列表 -->
+                    <div id="skinList" style="margin-bottom: 16px; min-height: 40px;">
+                        {% set skins = config.skin_images %}
+                        {% if skins %}
+                            {% for s in skins %}
+                            <div class="skin-item" data-filename="{{ s }}">
+                                <img class="skin-preview {% if config.skin_index == loop.index0 and config.skin_mode == 'fixed' %}selected{% endif %}"
+                                    src="/img/{{ s }}" alt="{{ s }}"
+                                    title="{{ s }}"
+                                    onclick="selectSkin('{{ s }}', {{ loop.index0 }})">
+                                <button class="skin-delete-btn" title="删除" onclick="event.stopPropagation(); deleteSkin('{{ s }}')">✕</button>
+                            </div>
+                            {% endfor %}
+                        {% else %}
+                            <span style="color: #aaa;">暂无皮肤，请上传</span>
+                        {% endif %}
+                    </div>
+
+                    <!-- 上传皮肤 -->
+                    <div class="upload-row">
+                        <input type="file" id="skinFileInput" accept="image/png" style="display:none;">
+                        <mdui-button id="skinUploadBtn" variant="outlined" type="button">
+                            📤 上传皮肤
+                        </mdui-button>
+                        <span class="upload-status" id="skinStatus"></span>
+                    </div>
+
+                    <!-- 皮肤模式 -->
+                    <form method="post" action="/settings" class="setting-form" style="margin-top: 16px;">
+                        <label>皮肤选择模式</label>
+                        <mdui-segmented-button-group selects="single"
+                            value="{{ config.skin_mode }}" name="skin_mode"
+                            id="skinModeGroup">
+                            <mdui-segmented-button value="random">🎲 随机</mdui-segmented-button>
+                            <mdui-segmented-button value="fixed">📍 固定</mdui-segmented-button>
+                        </mdui-segmented-button-group>
+
+                        <input type="hidden" name="skin_index" id="skinIndexInput"
+                            value="{{ config.skin_index }}">
+
+                        <mdui-button type="submit" variant="filled">保存皮肤设置</mdui-button>
+                    </form>
+                </div>
+            </mdui-card>
+
+            <!-- 位置设置卡片 -->
+            <mdui-card>
+                <div style="padding: 24px;">
+                    <h2>位置设置</h2>
+                    <div class="setting-description">
+                        请根据您的屏幕分辨率调整以下坐标值。坐标格式为 X,Y（例如：1087,799）
+                    </div>
+                    <div id="mousePosition"
+                        style="margin-bottom: 16px; padding: 8px; background-color: #f5f5f5; border-radius: 4px;">
+                        当前鼠标坐标: <span id="mouseX">0</span>, <span id="mouseY">0</span><br>
+                        只有在网页全屏后才能正确显示鼠标坐标
+                    </div>
+                    <form method="post" action="/settings" class="setting-form">
+                        <mdui-text-field label="P1坐标(X,Y)" name="p1" value="{{ config.p1 | join(",") }}"
+                            helper="舞萌|中二服务号生成二维码按钮的位置"></mdui-text-field>
+                        <mdui-text-field label="P2坐标(X,Y)" name="p2" value="{{ config.p2 | join(",") }}"
+                            helper="生成后的二维码的消息的位置"></mdui-text-field>
+
+                        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+                            <mdui-button id="autoDetectBtn" variant="outlined" type="button">
+                                🔍 自动识别位置
+                            </mdui-button>
+                            <span id="detectStatus" style="font-size: 14px; color: #888;"></span>
+                        </div>
+
+                        <mdui-button type="submit" variant="filled">保存位置设置</mdui-button>
+                    </form>
+                </div>
+            </mdui-card>
+
+            <!-- 解码设置卡片 -->
+            <mdui-card>
+                <div style="padding: 24px;">
+                    <h2>解码设置</h2>
+                    <div class="setting-description">
+                        当程序无法正确识别二维码时，会根据以下设置进行重试
+                    </div>
+                    <form method="post" action="/settings" class="setting-form">
+                        <mdui-text-field label="超时时间(秒)" name="decode.time"
+                            value="{{ config.decode.time }}" type="number"
+                            helper="二维码解码超时时间"></mdui-text-field>
+                        <mdui-text-field label="重试次数" name="decode.retry_count"
+                            value="{{ config.decode.retry_count }}" type="number"
+                            helper="二维码解码重试次数"></mdui-text-field>
+                        <mdui-button type="submit" variant="filled">保存解码设置</mdui-button>
+                    </form>
+                </div>
+            </mdui-card>
+
+            <!-- Linux 设置卡片 -->
+            {% if is_linux %}
+            <mdui-card>
+                <div style="padding: 24px;">
+                    <h2>🐧 Linux 设置</h2>
+                    <div class="setting-description">
+                        Linux 平台专用的微信相关配置。通过拦截微信打开的链接获取二维码。
+                    </div>
+                    <form method="post" action="/settings" class="setting-form">
+                        <mdui-text-field label="微信可执行文件路径" name="wechat_bin"
+                            value="{{ config.wechat_bin }}"
+                            helper="Linux 微信客户端的绝对路径"></mdui-text-field>
+                        <mdui-text-field label="链接等待超时(秒)" name="wechat_url_timeout"
+                            value="{{ config.wechat_url_timeout }}" type="number"
+                            helper="等待微信打开链接的最长时间"></mdui-text-field>
+                        <mdui-button type="submit" variant="filled">保存 Linux 设置</mdui-button>
+                    </form>
+                </div>
+            </mdui-card>
+            {% endif %}
+        </div>
+
+        <mdui-card style="margin-top: 24px;">
+            <div style="padding: 24px;">
+                <h2>关于</h2>
+                <div class="setting-description">
+                    本来这里是我们的qq群的<br>
+                    但是我觉得像街边的小广告一样看着很难受<br>
+                    改成我们的<a href="https://github.com/SodaCodeSave/QRmai" target="_blank">Github地址</a>吧
+                </div>
+                <mdui-button id="checkUpdateBtn" variant="outlined">检查更新</mdui-button>
+                <mdui-button id="manualUpdateBtn" variant="filled" color="primary"
+                    style="margin-left: 8px;">手动更新</mdui-button>
+                <div id="updateStatus" style="margin-top: 16px; display: none;"></div>
+            </div>
+        </mdui-card>
+    </mdui-container>
+
+    <script>
+        // ================================================================
+        // 实时鼠标坐标
+        // ================================================================
+        document.addEventListener('mousemove', function (e) {
+            document.getElementById('mouseX').textContent = e.clientX;
+            document.getElementById('mouseY').textContent = e.clientY;
+        });
+
+        // ================================================================
+        // 自定义皮肤字段显隐
+        // ================================================================
+        document.querySelector('mdui-segmented-button-group[name="skin_format"]')
+            .addEventListener('change', function () {
+                const fields = document.getElementById('customSkinFields');
+                fields.style.display = (this.value === 'custom') ? 'block' : 'none';
+            });
+
+        // ================================================================
+        // 表单提交
+        // ================================================================
+        document.querySelectorAll('.setting-form').forEach(form => {
+            form.addEventListener('submit', function (e) {
+                e.preventDefault();
+                const formData = new FormData(this);
+                const params = new URLSearchParams(formData);
+
+                fetch('/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: params
+                })
+                .then(response => {
+                    if (response.ok) {
+                        mdui.snackbar({ message: '设置已保存', placement: 'top' });
+                    } else if (response.status === 403) {
+                        mdui.snackbar({ message: '认证失败，请重新登录', placement: 'top' });
+                        setTimeout(() => { window.location.href = '/login'; }, 1500);
+                    } else {
+                        mdui.snackbar({ message: '保存失败', placement: 'top' });
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    mdui.snackbar({ message: '网络错误', placement: 'top' });
+                });
+            });
+        });
+
+        // ================================================================
+        // 皮肤选择
+        // ================================================================
+        function selectSkin(filename, index) {
+            // 切换为固定模式
+            const modeGroup = document.getElementById('skinModeGroup');
+            modeGroup.value = 'fixed';
+            document.getElementById('skinIndexInput').value = index;
+
+            // 高亮选中
+            document.querySelectorAll('.skin-preview').forEach(img => img.classList.remove('selected'));
+            const target = document.querySelector(`.skin-item[data-filename="${filename}"] .skin-preview`);
+            if (target) target.classList.add('selected');
+        }
+
+        // ================================================================
+        // 文件上传通用函数
+        // ================================================================
+        function uploadFile(url, fileInput, statusEl, onSuccess) {
+            const file = fileInput.files[0];
+            if (!file) {
+                mdui.snackbar({ message: '请先选择文件', placement: 'top' });
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            statusEl.textContent = '上传中...';
+            statusEl.style.color = '#888';
+
+            fetch(url, { method: 'POST', body: formData })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        statusEl.textContent = '✗ ' + data.error;
+                        statusEl.style.color = '#e53935';
+                        return;
+                    }
+                    statusEl.textContent = '✓ 上传成功';
+                    statusEl.style.color = '#43a047';
+                    if (onSuccess) onSuccess(data);
+                })
+                .catch(error => {
+                    statusEl.textContent = '✗ 网络错误';
+                    statusEl.style.color = '#e53935';
+                    console.error('Upload error:', error);
+                })
+                .finally(() => {
+                    fileInput.value = '';
+                });
+        }
+
+        // ── P1 上传 ──
+        document.getElementById('p1UploadBtn').addEventListener('click', function () {
+            document.getElementById('p1FileInput').click();
+        });
+        document.getElementById('p1FileInput').addEventListener('change', function () {
+            uploadFile('/upload_p1', this, document.getElementById('p1Status'), function (data) {
+                const preview = document.getElementById('p1Preview');
+                preview.src = '/img/p1_user.png?t=' + Date.now();
+                preview.style.display = 'inline';
+                document.getElementById('p1DeleteBtn').style.display = 'inline-flex';
+            });
+        });
+
+        // ── P1 删除 ──
+        document.getElementById('p1DeleteBtn').addEventListener('click', function () {
+            fetch('/delete_skin', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filename: 'p1_user.png' })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('p1Preview').src = '/img/p1.png';
+                    document.getElementById('p1DeleteBtn').style.display = 'none';
+                    document.getElementById('p1Status').textContent = '已删除用户模板';
+                    document.getElementById('p1Status').style.color = '#888';
+                }
+            });
+        });
+
+        // ── P2 上传 ──
+        document.getElementById('p2UploadBtn').addEventListener('click', function () {
+            document.getElementById('p2FileInput').click();
+        });
+        document.getElementById('p2FileInput').addEventListener('change', function () {
+            uploadFile('/upload_p2', this, document.getElementById('p2Status'), function (data) {
+                const preview = document.getElementById('p2Preview');
+                preview.src = '/img/p2_user.png?t=' + Date.now();
+                preview.style.display = 'inline';
+                document.getElementById('p2DeleteBtn').style.display = 'inline-flex';
+            });
+        });
+
+        // ── P2 删除 ──
+        document.getElementById('p2DeleteBtn').addEventListener('click', function () {
+            fetch('/delete_skin', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filename: 'p2_user.png' })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('p2Preview').src = '/img/p2.png';
+                    document.getElementById('p2DeleteBtn').style.display = 'none';
+                    document.getElementById('p2Status').textContent = '已删除用户模板';
+                    document.getElementById('p2Status').style.color = '#888';
+                }
+            });
+        });
+
+        // ── 皮肤上传 ──
+        document.getElementById('skinUploadBtn').addEventListener('click', function () {
+            document.getElementById('skinFileInput').click();
+        });
+        document.getElementById('skinFileInput').addEventListener('change', function () {
+            uploadFile('/upload_skin', this, document.getElementById('skinStatus'), function (data) {
+                // 刷新皮肤列表
+                refreshSkinList();
+            });
+        });
+
+        // ── 删除皮肤 ──
+        function deleteSkin(filename) {
+            if (!confirm('确定要删除皮肤 ' + filename + ' 吗？')) return;
+
+            fetch('/delete_skin', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filename: filename })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    refreshSkinList();
+                }
+            });
+        }
+
+        function refreshSkinList() {
+            // 重新加载页面以获取最新的皮肤列表
+            // 这确保了 skin_images 和 UI 同步
+            window.location.reload();
+        }
+
+        // ================================================================
+        // OpenCV 自动识别位置
+        // ================================================================
+        const autoDetectBtn = document.getElementById('autoDetectBtn');
+        const detectStatus = document.getElementById('detectStatus');
+        const p1Field = document.querySelector('mdui-text-field[name="p1"]');
+        const p2Field = document.querySelector('mdui-text-field[name="p2"]');
+
+        autoDetectBtn.addEventListener('click', function () {
+            autoDetectBtn.disabled = true;
+            autoDetectBtn.textContent = '识别中...';
+            detectStatus.textContent = '正在截图并识别，请稍候...';
+            detectStatus.style.color = '#888';
+
+            fetch('/detect_positions', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    autoDetectBtn.disabled = false;
+                    autoDetectBtn.textContent = '🔍 自动识别位置';
+
+                    if (data.error) {
+                        detectStatus.textContent = '✗ ' + data.error;
+                        detectStatus.style.color = '#e53935';
+                        return;
+                    }
+
+                    if (data.p1) p1Field.value = data.p1.join(',');
+                    if (data.p2) p2Field.value = data.p2.join(',');
+
+                    const parts = [];
+                    if (data.p1) parts.push('P1=[' + data.p1.join(',') + ']');
+                    if (data.p2) parts.push('P2=[' + data.p2.join(',') + ']');
+                    detectStatus.textContent = '✓ 已识别: ' + parts.join('  ');
+                    detectStatus.style.color = '#43a047';
+
+                    mdui.snackbar({
+                        message: '坐标已填入，请核对后点击「保存位置设置」',
+                        placement: 'top',
+                        duration: 4000,
+                    });
+                })
+                .catch(error => {
+                    autoDetectBtn.disabled = false;
+                    autoDetectBtn.textContent = '🔍 自动识别位置';
+                    detectStatus.textContent = '✗ 网络错误: ' + error.message;
+                    detectStatus.style.color = '#e53935';
+                    console.error('detect_positions error:', error);
+                });
+        });
+
+        // ================================================================
+        // 登出
+        // ================================================================
+        document.getElementById('logoutBtn').addEventListener('click', function () {
+            fetch('/logout', { method: 'POST' })
+                .then(() => { window.location.href = '/login'; });
+        });
+
+        // ================================================================
+        // 检查更新
+        // ================================================================
+        document.getElementById('checkUpdateBtn').addEventListener('click', function () {
+            const btn = this;
+            const statusDiv = document.getElementById('updateStatus');
+            btn.disabled = true;
+            btn.textContent = '检查中...';
+            statusDiv.style.display = 'none';
+
+            fetch('/check_update', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        statusDiv.innerHTML = `<mdui-alert variant="error">${data.message}</mdui-alert>`;
+                    } else if (data.has_update) {
+                        statusDiv.innerHTML = `
+                        <mdui-alert variant="info">
+                            <div>发现新版本: ${data.version}</div>
+                            <div>更新名称: ${data.name}</div>
+                            <div>发布时间: ${data.published_at}</div>
+                            <div>更新内容: ${data.body || '无'}</div>
+                        </mdui-alert>`;
+                    } else {
+                        statusDiv.innerHTML = `<mdui-alert variant="success">${data.message}</mdui-alert>`;
+                    }
+                    statusDiv.style.display = 'block';
+                })
+                .catch(error => {
+                    statusDiv.innerHTML = `<mdui-alert variant="error">网络错误: ${error.message}</mdui-alert>`;
+                    statusDiv.style.display = 'block';
+                })
+                .finally(() => {
+                    btn.disabled = false;
+                    btn.textContent = '检查更新';
+                });
+        });
+
+        // ================================================================
+        // 手动更新
+        // ================================================================
+        document.getElementById('manualUpdateBtn').addEventListener('click', function () {
+            const btn = this;
+            const statusDiv = document.getElementById('updateStatus');
+
+            if (!confirm('确定要进行手动更新吗？更新过程中程序可能会重启。')) return;
+
+            btn.disabled = true;
+            btn.textContent = '更新中...';
+            statusDiv.style.display = 'none';
+
+            fetch('/manual_update', { method: 'POST' })
+                .then(response => {
+                    if (response.status === 200) {
+                        statusDiv.innerHTML = '<mdui-alert variant="success">更新成功！程序将自动重启。</mdui-alert>';
+                        setTimeout(() => { window.location.reload(); }, 3000);
+                    } else if (response.status === 204) {
+                        statusDiv.innerHTML = '<mdui-alert variant="info">当前已是最新版本，无需更新。</mdui-alert>';
+                    } else if (response.status === 500) {
+                        return response.json().then(data => {
+                            throw new Error(data.message || '更新失败');
+                        });
+                    }
+                })
+                .catch(error => {
+                    statusDiv.innerHTML = `<mdui-alert variant="error">更新失败: ${error.message}</mdui-alert>`;
+                    statusDiv.style.display = 'block';
+                })
+                .finally(() => {
+                    btn.disabled = false;
+                    btn.textContent = '手动更新';
+                });
+        });
+    </script>
+</body>
+
+</html>

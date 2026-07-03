@@ -1,0 +1,479 @@
+use anyhow::{Context, Result};
+use minijinja::{context, Environment};
+use rocket::form::Form;
+use rocket::fs::FileServer;
+use rocket::http::{Cookie, CookieJar, ContentType, Status};
+use rocket::response::content::RawHtml;
+use rocket::response::Redirect;
+use rocket::serde::json::Json;
+use rocket::State;
+use rocket::tokio::sync::RwLock;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::fs;
+use std::fs::File;
+use std::io::{BufReader, Cursor};
+use std::net::IpAddr;
+use std::path::Path;
+use std::str::FromStr;
+use std::sync::Arc;
+
+#[macro_use]
+extern crate rocket;
+
+mod mouse;
+mod wechat;
+mod detect;
+
+use mouse::MouseController;
+use wechat::WechatHijack;
+
+// 子结构体 `decode`
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Decode {
+    pub time: u64,
+    #[serde(rename = "retry_count")]
+    pub retry_count: u64,
+}
+
+impl Default for Decode {
+    fn default() -> Self {
+        Self {
+            time: 10,
+            retry_count: 10,
+        }
+    }
+}
+
+// 主配置结构体
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Config {
+    pub p1: [u32; 2],
+    pub p2: [u32; 2],
+    pub token: String,
+    pub host: String,
+    pub port: u16,
+    #[serde(rename = "qr_route")]
+    pub qr_route: String,
+    #[serde(rename = "cache_duration")]
+    pub cache_duration: u64,
+    #[serde(rename = "standalone_mode")]
+    pub standalone_mode: bool,
+    pub decode: Decode,
+    #[serde(rename = "skin_format")]
+    pub skin_format: String,
+    #[serde(rename = "custom_skin_path")]
+    pub custom_skin_path: String,
+    #[serde(rename = "custom_skin_qrcode_size")]
+    pub custom_skin_qrcode_size: u32,
+    #[serde(rename = "custom_skin_qrcode_point")]
+    pub custom_skin_qrcode_point: [u32; 2],
+    #[serde(rename = "dev_mode")]
+    pub dev_mode: bool,
+    pub version: String,
+    #[serde(rename = "wechat_bin")]
+    pub wechat_bin: String,
+    #[serde(rename = "wechat_url_timeout")]
+    pub wechat_url_timeout: u64,
+    #[serde(rename = "auto_detect_p1p2")]
+    pub auto_detect_p1p2: bool,
+    #[serde(rename = "template_threshold")]
+    pub template_threshold: f64,
+    #[serde(rename = "skin_mode")]
+    pub skin_mode: String,
+    #[serde(rename = "skin_index")]
+    pub skin_index: u32,
+    #[serde(rename = "skin_images")]
+    pub skin_images: Vec<String>,
+    #[serde(rename = "p1_image")]
+    pub p1_image: String,
+    #[serde(rename = "p2_image")]
+    pub p2_image: String,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            p1: [1892, 1407],
+            p2: [1453, 1300],
+            token: "qrmai".into(),
+            host: "0.0.0.0".into(),
+            port: 5000,
+            qr_route: "/qrmai".into(),
+            cache_duration: 0,
+            standalone_mode: false,
+            decode: Decode::default(),
+            skin_format: "new".into(),
+            custom_skin_path: "./skin.png".into(),
+            custom_skin_qrcode_size: 576,
+            custom_skin_qrcode_point: [106, 638],
+            dev_mode: false,
+            version: "8d4e06be79dd88be4fbc8c40110a81bc".into(),
+            wechat_bin: "/opt/wechat/wechat".into(),
+            wechat_url_timeout: 5,
+            auto_detect_p1p2: false,
+            template_threshold: 0.8,
+            skin_mode: "random".into(),
+            skin_index: 0,
+            skin_images: vec![],
+            p1_image: "p1_user.png".into(),
+            p2_image: "p2_user.png".into(),
+        }
+    }
+}
+
+/// 登录表单
+#[derive(FromForm)]
+struct LoginForm {
+    token: String,
+}
+
+/// 加载配置：文件存在则读取，不存在则创建默认配置并写入
+pub fn load_or_create_config<P: AsRef<Path>>(path: P) -> Result<Config> {
+    let path = path.as_ref();
+    if path.exists() {
+        let file =
+            File::open(path).with_context(|| format!("无法打开配置文件: {path:?}"))?;
+        let reader = BufReader::new(file);
+        let config: Config =
+            serde_json::from_reader(reader).with_context(|| format!("解析 JSON 失败: {path:?}"))?;
+        Ok(config)
+    } else {
+        let config = Config::default();
+        let json = serde_json::to_string_pretty(&config)
+            .context("序列化默认配置失败")?;
+        fs::write(path, json)
+            .with_context(|| format!("写入默认配置文件失败: {path:?}"))?;
+        println!("已创建默认配置文件: {path:?}");
+        Ok(config)
+    }
+}
+
+/// 从文件路径读取并解析配置（要求文件必须存在）
+pub fn read_config<P: AsRef<Path>>(path: P) -> Result<Config> {
+    let file =
+        File::open(&path).with_context(|| format!("无法打开配置文件: {:?}", path.as_ref()))?;
+    let reader = BufReader::new(file);
+    let config: Config = serde_json::from_reader(reader)
+        .with_context(|| format!("解析 JSON 失败: {:?}", path.as_ref()))?;
+    Ok(config)
+}
+
+// ── 路由 ──────────────────────────────────────────────
+
+/// 共享的可变 Config 类型（异步读写锁，不阻塞 tokio 工作线程）
+pub type SharedConfig = Arc<RwLock<Config>>;
+
+/// 首页 / 登录页（静态编译）
+#[get("/")]
+fn index() -> RawHtml<&'static str> {
+    RawHtml(include_str!("../templates/login.html"))
+}
+
+/// 登录页
+#[get("/login")]
+fn login_page() -> RawHtml<&'static str> {
+    RawHtml(include_str!("../templates/login.html"))
+}
+
+/// 设置页 — 需要令牌鉴权，模板由 minijinja 渲染
+#[get("/settings")]
+async fn settings_page(
+    config: &State<SharedConfig>,
+    cookies: &CookieJar<'_>,
+) -> Result<RawHtml<String>, Redirect> {
+    let c = config.read().await;
+    let is_auth = cookies
+        .get_private("auth_token")
+        .map(|cookie| cookie.value() == c.token)
+        .unwrap_or(false);
+
+    if !is_auth {
+        return Err(Redirect::to("/login"));
+    }
+
+    let mut env = Environment::new();
+    env.add_template("settings", include_str!("../templates/settings.html"))
+        .expect("Failed to compile settings template");
+    let tmpl = env.get_template("settings").unwrap();
+    let html = tmpl
+        .render(context! {
+            config => &*c,
+            is_linux => cfg!(target_os = "linux"),
+        })
+        .expect("Failed to render settings template");
+    Ok(RawHtml(html))
+}
+
+/// 获取当前光标坐标（settings 页面「自动识别位置」功能用）
+#[get("/mouse_position")]
+fn mouse_position() -> Json<serde_json::Value> {
+    let mc = MouseController::new();
+    match mc {
+        Ok(mc) => match mc.position() {
+            Some((x, y)) => Json(serde_json::json!({"x": x, "y": y})),
+            None => Json(serde_json::json!({"error": "无法读取光标位置，请安装 hyprctl 或 xdotool"})),
+        },
+        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
+/// QR 二维码获取路由 — 绑定到 config.qr_route（默认 /qrmai）
+///
+/// 触发完整流程：点击 P1 → 点击 P2 → 拦截微信 URL → 下载解码 → 生成二维码图片 → 返回 PNG
+#[get("/")]
+async fn qrmai_handler(
+    config: &State<SharedConfig>,
+    hijack_state: &State<Arc<std::sync::Mutex<WechatHijack>>>,
+) -> Result<(ContentType, Vec<u8>), Status> {
+    let (p1, p2, timeout) = {
+        let c = config.read().await;
+        (c.p1, c.p2, c.wechat_url_timeout)
+    };
+    let hijack = hijack_state.inner().clone();
+
+    let result = rocket::tokio::task::spawn_blocking(move || {
+        let mut mouse = MouseController::new()?;
+        let mut hijack = hijack.lock().map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
+        hijack.qr_action(&mut mouse, p1, p2, timeout)
+    })
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    match result {
+        Ok(qr_data) => {
+            println!("[QRMai] 二维码获取成功: {}...", &qr_data[..qr_data.len().min(50)]);
+            // 用解码数据生成 QR 码图片
+            let code = qrcode::QrCode::new(&qr_data)
+                .map_err(|_| Status::InternalServerError)?;
+            let img = code.render::<image::Luma<u8>>().build();
+            let mut buf = Vec::new();
+            img.write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Png)
+                .map_err(|_| Status::InternalServerError)?;
+            Ok((ContentType::PNG, buf))
+        }
+        Err(e) => {
+            eprintln!("[QRMai] 二维码获取失败: {e}");
+            Err(Status::InternalServerError)
+        }
+    }
+}
+
+/// 自动识别 P1/P2 位置（OpenCV 模板匹配替代方案）
+///
+/// 截图 → 多尺度模板匹配 → 返回 P1、P2 坐标
+#[post("/detect_positions")]
+async fn detect_positions(config: &State<SharedConfig>) -> Json<serde_json::Value> {
+    let threshold = config.read().await.template_threshold as f32;
+
+    match detect::capture_screen() {
+        Ok(screen) => match detect::detect_p1p2(&screen, Path::new("img"), threshold) {
+            Ok((p1, p2)) => {
+                let mut resp = serde_json::json!({});
+                if let Some(p) = p1 {
+                    resp["p1"] = serde_json::json!(p);
+                }
+                if let Some(p) = p2 {
+                    resp["p2"] = serde_json::json!(p);
+                }
+                if p1.is_none() && p2.is_none() {
+                    resp["error"] = serde_json::json!("未找到 P1 或 P2 模板，请上传模板图片到 img/ 目录");
+                }
+                Json(resp)
+            }
+            Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+        },
+        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
+#[post("/login", data = "<form>")]
+async fn login(
+    config: &State<SharedConfig>,
+    cookies: &CookieJar<'_>,
+    form: Form<LoginForm>,
+) -> Json<serde_json::Value> {
+    let token = config.read().await.token.clone();
+    let success = form.token == token;
+    if success {
+        cookies.add_private(Cookie::new("auth_token", form.into_inner().token));
+    }
+    Json(serde_json::json!({"success": success}))
+}
+
+/// 保存配置 — 接收表单数据，更新到内存并写入 config.json
+#[post("/settings", data = "<form>")]
+async fn save_settings(
+    config: &State<SharedConfig>,
+    cookies: &CookieJar<'_>,
+    form: Form<BTreeMap<String, String>>,
+) -> Result<Json<serde_json::Value>, Status> {
+    // 鉴权
+    {
+        let c = config.read().await;
+        let is_auth = cookies
+            .get_private("auth_token")
+            .map(|cookie| cookie.value() == c.token)
+            .unwrap_or(false);
+        if !is_auth {
+            return Err(Status::Forbidden);
+        }
+    }
+
+    let form = form.into_inner();
+    let mut c = config.write().await;
+
+    // 辅助函数：解析 "X,Y" 格式坐标
+    fn parse_pair(s: &str) -> Option<[u32; 2]> {
+        let mut parts = s.splitn(2, ',');
+        let x: u32 = parts.next()?.trim().parse().ok()?;
+        let y: u32 = parts.next()?.trim().parse().ok()?;
+        Some([x, y])
+    }
+
+    for (key, value) in &form {
+        match key.as_str() {
+            "token" => c.token = value.clone(),
+            "qr_route" => c.qr_route = value.clone(),
+            "host" => c.host = value.clone(),
+            "port" => {
+                if let Ok(p) = value.parse() {
+                    c.port = p;
+                }
+            }
+            "cache_duration" => {
+                if let Ok(d) = value.parse() {
+                    c.cache_duration = d;
+                }
+            }
+            "standalone_mode" => c.standalone_mode = value == "true" || value == "on",
+            "skin_format" => c.skin_format = value.clone(),
+            "custom_skin_path" => c.custom_skin_path = value.clone(),
+            "custom_skin_qrcode_size" => {
+                if let Ok(s) = value.parse() {
+                    c.custom_skin_qrcode_size = s;
+                }
+            }
+            "custom_skin_qrcode_point" => {
+                if let Some(pt) = parse_pair(value) {
+                    c.custom_skin_qrcode_point = pt;
+                }
+            }
+            "decode.time" => {
+                if let Ok(t) = value.parse() {
+                    c.decode.time = t;
+                }
+            }
+            "decode.retry_count" => {
+                if let Ok(rc) = value.parse() {
+                    c.decode.retry_count = rc;
+                }
+            }
+            "wechat_bin" => c.wechat_bin = value.clone(),
+            "wechat_url_timeout" => {
+                if let Ok(t) = value.parse() {
+                    c.wechat_url_timeout = t;
+                }
+            }
+            "skin_mode" => c.skin_mode = value.clone(),
+            "skin_index" => {
+                if let Ok(i) = value.parse() {
+                    c.skin_index = i;
+                }
+            }
+            "p1" => {
+                if let Some(pt) = parse_pair(value) {
+                    c.p1 = pt;
+                }
+            }
+            "p2" => {
+                if let Some(pt) = parse_pair(value) {
+                    c.p2 = pt;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // 如果表单中没有 standalone_mode 字段，说明开关被关闭了
+    if !form.contains_key("standalone_mode") {
+        c.standalone_mode = false;
+    }
+
+    // 写入配置文件
+    let json = serde_json::to_string_pretty(&*c).map_err(|_| Status::InternalServerError)?;
+    fs::write("config.json", json).map_err(|_| Status::InternalServerError)?;
+
+    Ok(Json(serde_json::json!({"success": true})))
+}
+
+// ── 启动入口 ──────────────────────────────────────────
+
+#[rocket::main]
+async fn main() -> Result<(), rocket::Error> {
+    let config = load_or_create_config("config.json").expect("Failed to load or create config");
+
+    println!("读取到的配置: {:#?}", config);
+    println!("Token: {}", config.token);
+    println!("Port: {}", config.port);
+
+    // 保存 qr_route 和 host/port 用于后续使用（config 将被 move 到 RwLock 中）
+    let qr_route = config.qr_route.clone();
+    let host = config.host.clone();
+    let port = config.port;
+
+    // ── 初始化微信劫持环境（仅 Linux） ──
+    let hijack: Arc<std::sync::Mutex<WechatHijack>> = if cfg!(target_os = "linux") {
+        match WechatHijack::init(&config.wechat_bin) {
+            Ok(mut h) => {
+                if !h.is_wechat_alive() {
+                    if let Err(e) = h.launch_wechat() {
+                        eprintln!("[QRMai] 微信启动失败: {e}，QR 功能不可用");
+                    }
+                }
+                Arc::new(std::sync::Mutex::new(h))
+            }
+            Err(e) => {
+                eprintln!("[QRMai] 微信劫持环境创建失败: {e}，QR 功能不可用");
+                Arc::new(std::sync::Mutex::new(
+                    WechatHijack::create_fresh("/nonexistent")
+                        .unwrap_or_else(|_| panic!()),
+                ))
+            }
+        }
+    } else {
+        Arc::new(std::sync::Mutex::new(
+            WechatHijack::create_fresh("/nonexistent").unwrap_or_else(|_| panic!()),
+        ))
+    };
+
+    let shared_config: SharedConfig = Arc::new(RwLock::new(config));
+
+    let rocket_config = rocket::Config {
+        address: IpAddr::from_str(&host).expect("Invalid host in config"),
+        port,
+        ..rocket::Config::debug_default()
+    };
+
+    let _rocket = rocket::custom(rocket_config)
+        .manage(shared_config)
+        .manage(hijack)
+        .mount(&qr_route, routes![qrmai_handler])
+        .mount(
+            "/",
+            routes![
+                index,
+                login_page,
+                settings_page,
+                login,
+                save_settings,
+                mouse_position,
+                detect_positions
+            ],
+        )
+        .mount("/img", FileServer::from("img"))
+        .launch()
+        .await?;
+
+    Ok(())
+}

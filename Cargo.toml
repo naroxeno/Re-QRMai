@@ -1,0 +1,45 @@
+[package]
+name = "QRMai-rs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.103"
+enigo = "0.6.1"
+flexi_logger = "0.31.9"
+image = { version = "0.25", default-features = false, features = ["png"] }
+opencv = "0.99"
+libc = "0.2"
+log = "0.4"
+qrcode = "0.14.1"
+regex = "1"
+rocket = { version = "0.5.1", features = ["json", "secrets"] }
+minijinja = { version = "2", features = ["serde"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+ureq = "3"
+zedbar = { version = "0.4.1", default-features = false, features = ["qrcode"] }
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.debugging]
+inherits = "dev"
+debug = true
+
+[target.'cfg(target_os = "linux")']
+# mold，如果您有 GCC 12+
+rustflags = ["-C", "link-arg=-fuse-ld=wild"]
+
+[resolver]
+feature-unification = "workspace"
+
+[profile.release]
+codegen-units = 1
+opt-level = "z"
+strip = "symbols"
+lto = "fat"
+panic = "abort"

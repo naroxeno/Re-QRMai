@@ -1,0 +1,38 @@
+{
+  "p1": [
+    613,
+    1407
+  ],
+  "p2": [
+    174,
+    1300
+  ],
+  "token": "qrmai",
+  "host": "0.0.0.0",
+  "port": 5000,
+  "qr_route": "/qrmai",
+  "cache_duration": 0,
+  "standalone_mode": false,
+  "decode": {
+    "time": 10,
+    "retry_count": 10
+  },
+  "skin_format": "new",
+  "custom_skin_path": "./skin.png",
+  "custom_skin_qrcode_size": 576,
+  "custom_skin_qrcode_point": [
+    106,
+    638
+  ],
+  "dev_mode": false,
+  "version": "8d4e06be79dd88be4fbc8c40110a81bc",
+  "wechat_bin": "/opt/wechat/wechat",
+  "wechat_url_timeout": 5,
+  "auto_detect_p1p2": false,
+  "template_threshold": 0.8,
+  "skin_mode": "random",
+  "skin_index": 0,
+  "skin_images": [],
+  "p1_image": "p1_user.png",
+  "p2_image": "p2_user.png"
+}
