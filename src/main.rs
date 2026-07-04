@@ -326,8 +326,6 @@ fn qr_png_response(data: &str) -> Result<(ContentType, Vec<u8>), Status> {
 }
 
 /// 自动识别 P1/P2 位置（OpenCV 模板匹配替代方案）
-///
-/// 截图 → 多尺度模板匹配 → 返回 P1、P2 坐标
 #[post("/detect_positions")]
 async fn detect_positions(config: &State<SharedConfig>) -> Json<serde_json::Value> {
     let threshold = config.read().await.template_threshold as f32;
@@ -684,7 +682,9 @@ async fn main() -> Result<(), rocket::Error> {
                 mouse_position,
                 detect_positions
             ],
-        )
+        );
+
+    let _rocket = _rocket
         .mount("/img", FileServer::from("img"))
         .mount("/dist", FileServer::from("dist"))
         .mount("/extension", FileServer::from("extension"))

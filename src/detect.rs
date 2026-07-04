@@ -193,25 +193,27 @@ pub fn capture_screen() -> Result<Mat> {
         MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings,
     };
 
-    // 共享状态：在 handler 回调中写入截图数据
-    let png_data: Arc<Mutex<Option<(Vec<u8>, u32, u32)>>> = Arc::new(Mutex::new(None));
-    let png_clone = png_data.clone();
+    // 共享状态与捕获标志（通过 Settings Flags 传入 handler）
+    struct CaptureFlags {
+        size: (u32, u32),
+        buffer: Arc<Mutex<Option<(Vec<u8>, u32, u32)>>>,
+    }
 
     struct OneShot {
         buffer: Arc<Mutex<Option<(Vec<u8>, u32, u32)>>>,
-        width: u32,
-        height: u32,
+        w: u32,
+        h: u32,
     }
 
     impl GraphicsCaptureApiHandler for OneShot {
-        type Flags = (u32, u32);
+        type Flags = CaptureFlags;
         type Error = Box<dyn std::error::Error + Send + Sync>;
 
         fn new(ctx: Context<Self::Flags>) -> Result<Self, Self::Error> {
             Ok(Self {
-                buffer: png_clone,
-                width: ctx.flags.0,
-                height: ctx.flags.1,
+                buffer: ctx.flags.buffer,
+                w: ctx.flags.size.0,
+                h: ctx.flags.size.1,
             })
         }
 
@@ -220,8 +222,9 @@ pub fn capture_screen() -> Result<Mat> {
             frame: &mut Frame,
             control: InternalCaptureControl,
         ) -> Result<(), Self::Error> {
-            let rgba = frame.buffer()?.to_vec();
-            *self.buffer.lock().unwrap() = Some((rgba, self.width, self.height));
+            let mut raw = frame.buffer()?;
+            let rgba: Vec<u8> = raw.as_raw_buffer().to_vec();
+            *self.buffer.lock().unwrap() = Some((rgba, self.w, self.h));
             control.stop();
             Ok(())
         }
@@ -231,12 +234,19 @@ pub fn capture_screen() -> Result<Mat> {
         }
     }
 
+    let png_data: Arc<Mutex<Option<(Vec<u8>, u32, u32)>>> = Arc::new(Mutex::new(None));
+
     // 弹出选择器让用户选择捕获目标（屏幕或窗口）
     let item = GraphicsCapturePicker::pick_item().context("无法打开捕获选择器")?;
     let Some(item) = item else {
         anyhow::bail!("未选择捕获目标");
     };
     let (width, height) = item.size().context("无法获取捕获目标尺寸")?;
+
+    let flags = CaptureFlags {
+        size: (width as u32, height as u32),
+        buffer: png_data.clone(),
+    };
 
     let settings = Settings::new(
         item,
@@ -246,7 +256,7 @@ pub fn capture_screen() -> Result<Mat> {
         MinimumUpdateIntervalSettings::Default,
         DirtyRegionSettings::Default,
         ColorFormat::Rgba8,
-        (width as i32, height as i32),
+        flags,
     );
 
     // start() 阻塞直到 on_frame_arrived 调用 control.stop()

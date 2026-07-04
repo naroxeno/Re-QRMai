@@ -12,7 +12,8 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{BufRead, BufReader};
-use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
+#[cfg(unix)] use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -32,10 +33,13 @@ struct HijackState {
     fake_bin_dir: String,
 }
 
-/// 通过发送信号 0 检查指定 PID 的进程是否存活
+#[cfg(unix)]
 fn pid_is_alive(pid: u32) -> bool {
-    // kill(pid, 0) 不发送信号，仅检查进程是否存在
     unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+#[cfg(not(unix))]
+fn pid_is_alive(_pid: u32) -> bool {
+    false
 }
 
 // ── 伪装的 xdg-open ──────────────────────────────────────
@@ -62,10 +66,11 @@ fi
     fs::write(&xdg_open, script)
         .with_context(|| format!("写入伪装 xdg-open 失败: {xdg_open:?}"))?;
 
+    #[allow(unused_mut)]
     let mut perms = fs::metadata(&xdg_open)
         .with_context(|| format!("读取权限失败: {xdg_open:?}"))?
         .permissions();
-    perms.set_mode(0o755);
+    #[cfg(unix)] { perms.set_mode(0o755); }
     fs::set_permissions(&xdg_open, perms)
         .with_context(|| format!("设置可执行权限失败: {xdg_open:?}"))?;
 
@@ -425,13 +430,15 @@ impl WechatHijack {
         p1: [u32; 2],
         p2: [u32; 2],
     ) -> Result<()> {
-        if !self.is_wechat_alive() {
-            info!("[Wechat] 微信进程已退出，正在重新启动...");
-            self.recovered = false;
-            self.launch_wechat()?;
+        #[cfg(target_os = "linux")]
+        {
+            if !self.is_wechat_alive() {
+                info!("[Wechat] 微信进程已退出，正在重新启动...");
+                self.recovered = false;
+                self.launch_wechat()?;
+            }
+            self.drain_queue();
         }
-
-        self.drain_queue();
 
         info!("[Wechat] 点击 P1 ({p1:?}) 生成二维码");
         mouse.move_click(p1[0] as i32, p1[1] as i32, 100)?;
@@ -513,6 +520,7 @@ impl WechatHijack {
             let _ = proc.wait();
         } else if let Some(pid) = self.wechat_pid {
             info!("[Wechat] 正在终止微信进程 (PID {pid})...");
+            #[cfg(unix)]
             unsafe {
                 libc::kill(pid as i32, libc::SIGTERM);
             }
@@ -524,6 +532,7 @@ impl WechatHijack {
                 thread::sleep(Duration::from_millis(200));
             }
             if pid_is_alive(pid) {
+                #[cfg(unix)]
                 unsafe {
                     libc::kill(pid as i32, libc::SIGKILL);
                 }
