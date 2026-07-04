@@ -325,7 +325,7 @@ fn qr_png_response(data: &str) -> Result<(ContentType, Vec<u8>), Status> {
     Ok((ContentType::PNG, buf))
 }
 
-/// 自动识别 P1/P2 位置（OpenCV 模板匹配替代方案）
+/// 自动识别 P1/P2 位置（GPU 加速模板匹配）
 #[post("/detect_positions")]
 async fn detect_positions(config: &State<SharedConfig>) -> Json<serde_json::Value> {
     let threshold = config.read().await.template_threshold as f32;
