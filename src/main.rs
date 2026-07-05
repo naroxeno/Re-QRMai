@@ -172,6 +172,39 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> Result<Config> {
     Ok(config)
 }
 
+/// 确保 img/ 目录存在，并写入默认模板图片（嵌入在二进制中）
+fn ensure_img_dir() {
+    let img_dir = Path::new("img");
+    if !img_dir.exists() {
+        fs::create_dir_all(img_dir).expect("无法创建 img/ 目录");
+        info!("[Init] 已创建 img/ 目录");
+    }
+
+    // 写入默认 P1 模板（如果不存在）
+    let p1_path = img_dir.join("p1.png");
+    if !p1_path.exists() {
+        fs::write(&p1_path, include_bytes!("../img/p1.png"))
+            .expect("无法写入默认 p1.png 模板");
+        info!("[Init] 已创建默认模板: {p1_path:?}");
+    }
+
+    // 写入默认 P2 模板（如果不存在）
+    let p2_path = img_dir.join("p2.png");
+    if !p2_path.exists() {
+        fs::write(&p2_path, include_bytes!("../img/p2.png"))
+            .expect("无法写入默认 p2.png 模板");
+        info!("[Init] 已创建默认模板: {p2_path:?}");
+    }
+
+    // 写入 README（如果不存在）
+    let readme_path = img_dir.join("README.txt");
+    if !readme_path.exists() {
+        fs::write(&readme_path, include_str!("../img/README.txt"))
+            .expect("无法写入 img/README.txt");
+        info!("[Init] 已创建 img/README.txt");
+    }
+}
+
 // ── 路由 ──────────────────────────────────────────────
 
 /// 共享的可变 Config 类型（异步读写锁，不阻塞 tokio 工作线程）
@@ -179,6 +212,7 @@ pub type SharedConfig = Arc<RwLock<Config>>;
 
 /// QR 码缓存：扩展模式下暂存最新解码结果
 pub type QrCache = Arc<RwLock<Option<(String, std::time::Instant)>>>;
+pub struct HijackState(pub Option<Arc<std::sync::Mutex<WechatHijack>>>);
 
 /// 首页 / 登录页（静态编译）
 #[get("/")]
@@ -241,7 +275,7 @@ fn mouse_position() -> Json<serde_json::Value> {
 #[get("/")]
 async fn qrmai_handler(
     config: &State<SharedConfig>,
-    hijack_state: &State<Arc<std::sync::Mutex<WechatHijack>>>,
+    hijack_state: &State<HijackState>,
     qr_cache: &State<QrCache>,
 ) -> Result<(ContentType, Vec<u8>), Status> {
     let (capture_mode, p1, p2, timeout) = {
@@ -259,11 +293,23 @@ async fn qrmai_handler(
         }
 
         // 在阻塞线程中执行鼠标点击
-        let hijack = hijack_state.inner().clone();
+        let hijack_opt = hijack_state.0.clone();
         rocket::tokio::task::spawn_blocking(move || {
             let mut mouse = MouseController::new()?;
-            let mut hijack = hijack.lock().map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
-            hijack.click_p1p2(&mut mouse, p1, p2)
+            if let Some(hijack_arc) = hijack_opt {
+                let mut hijack = hijack_arc.lock()
+                    .map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
+                hijack.click_p1p2(&mut mouse, p1, p2)
+            } else {
+                // 非 Linux 平台：直接模拟点击，无需微信劫持
+                info!("[QRMai] 点击 P1 ({p1:?}) 生成二维码");
+                mouse.move_click(p1[0] as i32, p1[1] as i32, 100)?;
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                info!("[QRMai] 点击 P2 ({p2:?})");
+                mouse.move_click(p2[0] as i32, p2[1] as i32, 0)?;
+                mouse.move_click(p2[0] as i32, p2[1] as i32, 0)?;
+                Ok(())
+            }
         })
         .await
         .map_err(|_| Status::InternalServerError)?
@@ -293,7 +339,14 @@ async fn qrmai_handler(
     }
 
     // ── 劫持模式：点击 P1 → P2 → FIFO 拦截 → 解码 ──
-    let hijack = hijack_state.inner().clone();
+    let hijack = hijack_state
+        .0
+        .as_ref()
+        .ok_or_else(|| {
+            error!("[QRMai] 劫持模式仅在 Linux 上可用");
+            Status::InternalServerError
+        })?
+        .clone();
 
     let result = rocket::tokio::task::spawn_blocking(move || {
         let mut mouse = MouseController::new()?;
@@ -623,6 +676,9 @@ async fn main() -> Result<(), rocket::Error> {
 
     let config = load_or_create_config("config.json").expect("Failed to load or create config");
 
+    // ── 确保 img/ 目录及默认模板存在 ──
+    ensure_img_dir();
+
     info!("读取到的配置: {:#?}", config);
     info!("Token: {}", config.token);
     info!("Port: {}", config.port);
@@ -633,7 +689,8 @@ async fn main() -> Result<(), rocket::Error> {
     let port = config.port;
 
     // ── 初始化微信劫持环境（仅 Linux） ──
-    let hijack: Arc<std::sync::Mutex<WechatHijack>> = if cfg!(target_os = "linux") {
+    #[cfg(target_os = "linux")]
+    let hijack = {
         match WechatHijack::init(&config.wechat_bin) {
             Ok(mut h) => {
                 if !h.is_wechat_alive() {
@@ -641,21 +698,18 @@ async fn main() -> Result<(), rocket::Error> {
                         error!("[QRMai] 微信启动失败: {e}，QR 功能不可用");
                     }
                 }
-                Arc::new(std::sync::Mutex::new(h))
+                Some(Arc::new(std::sync::Mutex::new(h)))
             }
             Err(e) => {
                 error!("[QRMai] 微信劫持环境创建失败: {e}，QR 功能不可用");
-                Arc::new(std::sync::Mutex::new(
-                    WechatHijack::create_fresh("/nonexistent")
-                        .unwrap_or_else(|_| panic!()),
-                ))
+                None
             }
         }
-    } else {
-        Arc::new(std::sync::Mutex::new(
-            WechatHijack::create_fresh("/nonexistent").unwrap_or_else(|_| panic!()),
-        ))
     };
+    #[cfg(not(target_os = "linux"))]
+    let hijack: Option<Arc<std::sync::Mutex<WechatHijack>>> = None;
+
+    let hijack_state = HijackState(hijack);
 
     let shared_config: SharedConfig = Arc::new(RwLock::new(config));
     let qr_cache: QrCache = Arc::new(RwLock::new(None));
@@ -669,7 +723,7 @@ async fn main() -> Result<(), rocket::Error> {
     let _rocket = rocket::custom(rocket_config)
         .manage(shared_config)
         .manage(qr_cache)
-        .manage(hijack)
+        .manage(hijack_state)
         .mount(&qr_route, routes![qrmai_handler, qrmai_url_handler])
         .mount(
             "/",
@@ -686,7 +740,6 @@ async fn main() -> Result<(), rocket::Error> {
 
     let _rocket = _rocket
         .mount("/img", FileServer::from("img"))
-        .mount("/dist", FileServer::from("dist"))
         .mount("/extension", FileServer::from("extension"))
         .launch()
         .await?;

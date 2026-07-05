@@ -86,11 +86,8 @@ def pack-extension [] {
         "background.js",
         "options.html",
         "options.js",
+        "icon.png",
     ] | each {|f| cp $"($ext_dir)/($f)" $chrome_dir }
-
-    if ("icon.png" | path join $ext_dir | path exists) {
-        cp $"($ext_dir)/icon.png" $chrome_dir
-    }
 
     cd $chrome_dir
     ^zip -qr $"($cwd)/($dist_dir)/extension-chrome.zip" ...(ls | get name)
@@ -107,11 +104,8 @@ def pack-extension [] {
         "background.js",
         "options.html",
         "options.js",
+        "icon.png",
     ] | each {|f| cp $"($ext_dir)/($f)" $ff_dir }
-
-    if ("icon.png" | path join $ext_dir | path exists) {
-        cp $"($ext_dir)/icon.png" $ff_dir
-    }
 
     cd $ff_dir
     ^zip -qr $"($cwd)/($dist_dir)/extension-firefox.zip" ...(ls | get name)
