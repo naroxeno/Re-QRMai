@@ -7,6 +7,8 @@
     "webNavigation",
     "storage",
     "tabs",
+    "webRequest",
+    "webRequestBlocking",
     "http://localhost/*",
     "http://127.0.0.1/*"
   ],

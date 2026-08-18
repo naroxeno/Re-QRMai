@@ -221,6 +221,24 @@ impl WechatHijack {
 
     // ── QR 扫码 ──
 
+    /// 纯点击流程（扩展模式 / 非 Linux 平台共用）：
+    /// 点击 P1（生成二维码按钮）→ 等待 → 点击 P2（触发打开链接，双击防漏）→ 返回
+    pub fn click_p1_p2(
+        mouse: &mut MouseController,
+        p1: [u32; 2],
+        p2: [u32; 2],
+    ) -> Result<()> {
+        info!("[Wechat] 点击 P1 ({p1:?}) 生成二维码");
+        mouse.move_click(p1[0] as i32, p1[1] as i32, 100)?;
+        thread::sleep(Duration::from_secs(2));
+
+        info!("[Wechat] 点击 P2 ({p2:?})");
+        mouse.move_click(p2[0] as i32, p2[1] as i32, 0)?;
+        mouse.move_click(p2[0] as i32, p2[1] as i32, 0)?;
+
+        Ok(())
+    }
+
     /// 执行 QR 扫码核心流程：
     ///   1. 点击 P1（生成二维码按钮）
     ///   2. 等待 → 点击 P2（二维码消息 → 触发 xdg-open）
@@ -267,15 +285,7 @@ impl WechatHijack {
             self.drain_queue();
         }
 
-        info!("[Wechat] 点击 P1 ({p1:?}) 生成二维码");
-        mouse.move_click(p1[0] as i32, p1[1] as i32, 100)?;
-        thread::sleep(Duration::from_secs(2));
-
-        info!("[Wechat] 点击 P2 ({p2:?})");
-        mouse.move_click(p2[0] as i32, p2[1] as i32, 0)?;
-        mouse.move_click(p2[0] as i32, p2[1] as i32, 0)?;
-
-        Ok(())
+        Self::click_p1_p2(mouse, p1, p2)
     }
 
     fn click_p2_and_wait(

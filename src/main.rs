@@ -165,13 +165,7 @@ async fn qrmai_handler(
                 hijack.click_p1p2(&mut mouse, p1, p2)
             } else {
                 // 非 Linux 平台：直接模拟点击，无需微信劫持
-                info!("[QRMai] 点击 P1 ({p1:?}) 生成二维码");
-                mouse.move_click(p1[0] as i32, p1[1] as i32, 100)?;
-                std::thread::sleep(std::time::Duration::from_secs(2));
-                info!("[QRMai] 点击 P2 ({p2:?})");
-                mouse.move_click(p2[0] as i32, p2[1] as i32, 0)?;
-                mouse.move_click(p2[0] as i32, p2[1] as i32, 0)?;
-                Ok(())
+                crate::wechat::WechatHijack::click_p1_p2(&mut mouse, p1, p2)
             }
         })
         .await
@@ -181,8 +175,11 @@ async fn qrmai_handler(
             Status::InternalServerError
         })?;
 
-        // 轮询缓存，等待浏览器扩展提交
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
+        // 轮询缓存，等待浏览器扩展提交。
+        // 注意：扩展模式完整链路 = 点击 → 微信打开浏览器 → 扩展拦截 → 抓取解码，
+        // 耗时通常大于劫持模式（只需等 FIFO URL），等待窗口需放宽（至少 15s）
+        let wait_timeout = timeout.max(15);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(wait_timeout);
         loop {
             {
                 let cache = qr_cache.read().await;
@@ -197,7 +194,7 @@ async fn qrmai_handler(
             rocket::tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
 
-        error!("[QRMai] 等待扩展提交链接超时 ({}s)", timeout);
+        error!("[QRMai] 等待扩展提交链接超时 ({}s)", wait_timeout);
         return Err(Status::InternalServerError);
     }
 
