@@ -134,6 +134,7 @@ def pack-release [profile: string = "debug"] {
 
     if ("config.toml" | path exists) { cp "config.toml" $pkg_dir }
     if ("README.md" | path exists)   { cp "README.md" $pkg_dir }
+    if ("LICENSE" | path exists)     { cp "LICENSE" $pkg_dir }
     if ("img" | path exists)         { cp -r "img" $"($pkg_dir)/img" }
     if ("static" | path exists)      { cp -r "static" $"($pkg_dir)/static" }
 

@@ -242,6 +242,9 @@ impl Config {
         if !(1..=65535).contains(&self.port) {
             return Err(format!("端口必须在 1–65535 之间，当前 {}", self.port));
         }
+        if self.host.parse::<std::net::IpAddr>().is_err() {
+            return Err(format!("host 必须是有效的 IP 地址，当前 {}", self.host));
+        }
         if self.token.trim().is_empty() {
             return Err("访问令牌不能为空".into());
         }

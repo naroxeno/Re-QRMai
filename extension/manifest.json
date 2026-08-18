@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "QRMai Bridge",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "拦截外部应用打开的二维码链接，转发到 QRMai 服务端处理",
   "permissions": ["webNavigation", "storage", "tabs", "declarativeNetRequest"],
   "host_permissions": ["http://localhost:*/*", "http://127.0.0.1:*/*"],

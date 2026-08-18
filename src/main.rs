@@ -37,36 +37,45 @@ struct LoginForm {
     token: String,
 }
 
-/// 确保 img/ 目录存在，并写入默认模板图片（嵌入在二进制中）
+/// 确保 img/ 目录存在，并写入默认模板图片（嵌入在二进制中）。
+/// 失败仅告警降级（模板缺失时自动识别不可用，但服务仍可启动），不 panic。
 fn ensure_img_dir() {
     let img_dir = Path::new("img");
     if !img_dir.exists() {
-        fs::create_dir_all(img_dir).expect("无法创建 img/ 目录");
-        info!("[Init] 已创建 img/ 目录");
+        match fs::create_dir_all(img_dir) {
+            Ok(_) => info!("[Init] 已创建 img/ 目录"),
+            Err(e) => {
+                error!("[Init] 无法创建 img/ 目录: {e}，模板图片功能将不可用");
+                return;
+            }
+        }
     }
 
     // 写入默认 P1 模板（如果不存在）
     let p1_path = img_dir.join("p1.png");
     if !p1_path.exists() {
-        fs::write(&p1_path, include_bytes!("../img/p1.png"))
-            .expect("无法写入默认 p1.png 模板");
-        info!("[Init] 已创建默认模板: {p1_path:?}");
+        match fs::write(&p1_path, include_bytes!("../img/p1.png")) {
+            Ok(_) => info!("[Init] 已创建默认模板: {p1_path:?}"),
+            Err(e) => error!("[Init] 写入默认 p1.png 模板失败: {e}"),
+        }
     }
 
     // 写入默认 P2 模板（如果不存在）
     let p2_path = img_dir.join("p2.png");
     if !p2_path.exists() {
-        fs::write(&p2_path, include_bytes!("../img/p2.png"))
-            .expect("无法写入默认 p2.png 模板");
-        info!("[Init] 已创建默认模板: {p2_path:?}");
+        match fs::write(&p2_path, include_bytes!("../img/p2.png")) {
+            Ok(_) => info!("[Init] 已创建默认模板: {p2_path:?}"),
+            Err(e) => error!("[Init] 写入默认 p2.png 模板失败: {e}"),
+        }
     }
 
     // 写入 README（如果不存在）
     let readme_path = img_dir.join("README.txt");
     if !readme_path.exists() {
-        fs::write(&readme_path, include_str!("../img/README.txt"))
-            .expect("无法写入 img/README.txt");
-        info!("[Init] 已创建 img/README.txt");
+        match fs::write(&readme_path, include_str!("../img/README.txt")) {
+            Ok(_) => info!("[Init] 已创建 img/README.txt"),
+            Err(e) => error!("[Init] 写入 img/README.txt 失败: {e}"),
+        }
     }
 }
 
@@ -475,7 +484,8 @@ fn file_format(
     )
 }
 
-/// 初始化 flexi_logger：彩色终端输出 + 写入 log/ 目录
+/// 初始化 flexi_logger：彩色终端输出 + 写入 log/ 目录。
+/// 失败时降级为仅终端提示（不 panic，服务仍可启动）。
 fn init_logger() {
     let basename = log_basename();
     let file_spec = flexi_logger::FileSpec::default()
@@ -483,14 +493,19 @@ fn init_logger() {
         .basename(&basename)
         .suppress_timestamp();
 
-    flexi_logger::Logger::try_with_env_or_str("info")
-        .unwrap()
-        .format_for_files(file_format)
-        .format_for_stderr(stderr_format)
-        .log_to_file(file_spec)
-        .duplicate_to_stderr(flexi_logger::Duplicate::All)
-        .start()
-        .unwrap();
+    let result = flexi_logger::Logger::try_with_env_or_str("info")
+        .map(|logger| {
+            logger
+                .format_for_files(file_format)
+                .format_for_stderr(stderr_format)
+                .log_to_file(file_spec)
+                .duplicate_to_stderr(flexi_logger::Duplicate::All)
+        })
+        .and_then(|logger| logger.start());
+
+    if let Err(e) = result {
+        eprintln!("[QRMai] 日志初始化失败，本次运行可能无日志输出: {e}");
+    }
 }
 
 // ── 启动入口 ──────────────────────────────────────────
@@ -500,7 +515,17 @@ async fn main() -> Result<(), rocket::Error> {
     // ── 初始化日志系统 ──
     init_logger();
 
-    let config = load_or_create_config("config.toml").expect("Failed to load or create config");
+    let config = match load_or_create_config("config.toml") {
+        Ok(c) => c,
+        Err(e) => {
+            error!("[QRMai] 配置加载失败: {e:#}，请检查 config.toml 是否存在且格式正确");
+            std::process::exit(1);
+        }
+    };
+    if let Err(e) = config.validate() {
+        error!("[QRMai] 配置校验失败: {e}，请修正 config.toml 后重启");
+        std::process::exit(1);
+    }
 
     // ── 确保 img/ 目录及默认模板存在 ──
     ensure_img_dir();
@@ -544,8 +569,15 @@ async fn main() -> Result<(), rocket::Error> {
         .add_template("settings", include_str!("../templates/settings.html"))
         .expect("Failed to compile settings template");
 
+    let address = match IpAddr::from_str(&host) {
+        Ok(addr) => addr,
+        Err(e) => {
+            error!("[QRMai] host 配置无效（应为 IP 地址）: {host:?} ({e})");
+            std::process::exit(1);
+        }
+    };
     let rocket_config = rocket::Config {
-        address: IpAddr::from_str(&host).expect("Invalid host in config"),
+        address,
         port,
         ..rocket::Config::debug_default()
     };
