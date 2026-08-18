@@ -374,7 +374,36 @@ pub fn apply_settings(c: &mut Config, form: &std::collections::BTreeMap<String, 
     }
 }
 
-/// 加载配置：文件存在则读取（TOML）；不存在则生成带说明的默认 TOML 并写入。
+/// 生成随机访问令牌：`qrmai` + 6 位随机字符（A-Za-z0-9）。
+///
+/// 仅用于首次创建配置文件时生成默认 token，避免沿用公开的弱默认值。
+/// 随机源来自 `RandomState` 的系统熵种子（跨平台，无需额外依赖）；
+/// 注意：非密码学安全随机，若需高强度令牌请手动修改 config.toml。
+pub fn generate_random_token() -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+
+    // RandomState::new() 每次使用不同的系统熵种子
+    let mut hasher = RandomState::new().build_hasher();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    hasher.write_u64(now);
+    let mut x = hasher.finish();
+
+    const CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let mut token = String::from("qrmai");
+    for _ in 0..6 {
+        token.push(CHARS[(x % 62) as usize] as char);
+        // 线性同余扩展，避免直接取同一哈希的相邻位
+        x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    }
+    token
+}
+
+/// 加载配置：文件存在则读取（TOML）；不存在则生成带说明的默认 TOML 并写入
+/// （首次创建时 token 自动随机生成，格式 qrmaiXXXXXX）。
 pub fn load_or_create_config<P: AsRef<Path>>(path: P) -> Result<Config> {
     let path = path.as_ref();
     if path.exists() {
@@ -384,10 +413,11 @@ pub fn load_or_create_config<P: AsRef<Path>>(path: P) -> Result<Config> {
             .with_context(|| format!("解析 TOML 失败: {path:?}"))?;
         Ok(config)
     } else {
-        let config = Config::default();
+        let mut config = Config::default();
+        config.token = generate_random_token();
         fs::write(path, render_config_toml(&config))
             .with_context(|| format!("写入默认配置文件失败: {path:?}"))?;
-        info!("已创建默认配置文件: {path:?}");
+        info!("已创建默认配置文件: {path:?}（token 已随机生成）");
         Ok(config)
     }
 }
@@ -522,5 +552,19 @@ retry_count = 10
         let mut c = Config::default();
         c.token = "  ".into();
         assert!(c.validate().is_err());
+    }
+
+    /// 随机 token：格式 qrmai + 6 位字母数字，两次生成不同
+    #[test]
+    fn random_token_format_and_uniqueness() {
+        let a = generate_random_token();
+        let b = generate_random_token();
+        assert!(a.starts_with("qrmai"), "应以 qrmai 开头: {a}");
+        assert_eq!(a.len(), 11, "qrmai(5) + 6 位随机: {a}");
+        assert!(
+            a[5..].chars().all(|c| c.is_ascii_alphanumeric()),
+            "随机部分应为字母数字: {a}"
+        );
+        assert_ne!(a, b, "两次生成不应相同");
     }
 }
