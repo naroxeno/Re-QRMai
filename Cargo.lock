@@ -22,6 +22,7 @@ dependencies = [
  "serde_json",
  "template-matching",
  "time",
+ "toml",
  "ureq",
  "windows-capture",
  "zedbar",

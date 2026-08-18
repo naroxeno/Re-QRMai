@@ -1,6 +1,9 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use log::{error, info};
 use minijinja::{context, Environment};
+use crate::config::{Config, load_or_create_config, render_config_toml};
+use crate::mouse::MouseController;
+use crate::wechat::{fetch_and_decode, WechatHijack};
 use rocket::form::Form;
 use rocket::fs::FileServer;
 use rocket::http::{Cookie, CookieJar, ContentType, Status};
@@ -9,11 +12,10 @@ use rocket::response::Redirect;
 use rocket::serde::json::Json;
 use rocket::State;
 use rocket::tokio::sync::RwLock;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::fs;
-use std::fs::File;
-use std::io::{BufReader, Cursor, Write};
+use std::io::{Cursor, Write};
 use std::net::IpAddr;
 use std::path::Path;
 use std::str::FromStr;
@@ -22,154 +24,17 @@ use std::sync::Arc;
 #[macro_use]
 extern crate rocket;
 
+mod config;
+mod detect;
 mod mouse;
 mod wechat;
-mod detect;
 
-use mouse::MouseController;
-use wechat::WechatHijack;
-
-// 子结构体 `decode`
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Decode {
-    pub time: u64,
-    #[serde(rename = "retry_count")]
-    pub retry_count: u64,
-}
-
-impl Default for Decode {
-    fn default() -> Self {
-        Self {
-            time: 10,
-            retry_count: 10,
-        }
-    }
-}
-
-fn default_capture_mode() -> String {
-    if cfg!(target_os = "linux") { "hijack".into() } else { "extension".into() }
-}
-
-// 主配置结构体
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Config {
-    pub p1: [u32; 2],
-    pub p2: [u32; 2],
-    pub token: String,
-    pub host: String,
-    pub port: u16,
-    #[serde(rename = "qr_route")]
-    pub qr_route: String,
-    #[serde(rename = "cache_duration")]
-    pub cache_duration: u64,
-    #[serde(rename = "standalone_mode")]
-    pub standalone_mode: bool,
-    pub decode: Decode,
-    #[serde(rename = "skin_format")]
-    pub skin_format: String,
-    #[serde(rename = "custom_skin_path")]
-    pub custom_skin_path: String,
-    #[serde(rename = "custom_skin_qrcode_size")]
-    pub custom_skin_qrcode_size: u32,
-    #[serde(rename = "custom_skin_qrcode_point")]
-    pub custom_skin_qrcode_point: [u32; 2],
-    #[serde(rename = "dev_mode")]
-    pub dev_mode: bool,
-    pub version: String,
-    #[serde(rename = "wechat_bin")]
-    pub wechat_bin: String,
-    #[serde(rename = "wechat_url_timeout")]
-    pub wechat_url_timeout: u64,
-    #[serde(rename = "auto_detect_p1p2")]
-    pub auto_detect_p1p2: bool,
-    #[serde(rename = "template_threshold")]
-    pub template_threshold: f64,
-    #[serde(rename = "skin_mode")]
-    pub skin_mode: String,
-    #[serde(rename = "skin_index")]
-    pub skin_index: u32,
-    #[serde(rename = "skin_images")]
-    pub skin_images: Vec<String>,
-    #[serde(rename = "p1_image")]
-    pub p1_image: String,
-    #[serde(rename = "p2_image")]
-    pub p2_image: String,
-    /// QR 码获取方式: "hijack" (Linux xdg-open 劫持) 或 "extension" (浏览器扩展)
-    #[serde(rename = "capture_mode", default = "default_capture_mode")]
-    pub capture_mode: String,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            p1: [1892, 1407],
-            p2: [1453, 1300],
-            token: "qrmai".into(),
-            host: "0.0.0.0".into(),
-            port: 5000,
-            qr_route: "/qrmai".into(),
-            cache_duration: 0,
-            standalone_mode: false,
-            decode: Decode::default(),
-            skin_format: "new".into(),
-            custom_skin_path: "./skin.png".into(),
-            custom_skin_qrcode_size: 576,
-            custom_skin_qrcode_point: [106, 638],
-            dev_mode: false,
-            version: "8d4e06be79dd88be4fbc8c40110a81bc".into(),
-            wechat_bin: "/opt/wechat/wechat".into(),
-            wechat_url_timeout: 5,
-            auto_detect_p1p2: false,
-            template_threshold: 0.8,
-            skin_mode: "random".into(),
-            skin_index: 0,
-            skin_images: vec![],
-            p1_image: "p1_user.png".into(),
-            p2_image: "p2_user.png".into(),
-            capture_mode: if cfg!(target_os = "linux") {
-                "hijack".into()
-            } else {
-                "extension".into()
-            },
-        }
-    }
-}
+// 配置模型（Config/Decode/加载函数）已拆分到 src/config.rs，见 qrmai_rs::config
 
 /// 登录表单
 #[derive(FromForm)]
 struct LoginForm {
     token: String,
-}
-
-/// 加载配置：文件存在则读取，不存在则创建默认配置并写入
-pub fn load_or_create_config<P: AsRef<Path>>(path: P) -> Result<Config> {
-    let path = path.as_ref();
-    if path.exists() {
-        let file =
-            File::open(path).with_context(|| format!("无法打开配置文件: {path:?}"))?;
-        let reader = BufReader::new(file);
-        let config: Config =
-            serde_json::from_reader(reader).with_context(|| format!("解析 JSON 失败: {path:?}"))?;
-        Ok(config)
-    } else {
-        let config = Config::default();
-        let json = serde_json::to_string_pretty(&config)
-            .context("序列化默认配置失败")?;
-        fs::write(path, json)
-            .with_context(|| format!("写入默认配置文件失败: {path:?}"))?;
-        info!("已创建默认配置文件: {path:?}");
-        Ok(config)
-    }
-}
-
-/// 从文件路径读取并解析配置（要求文件必须存在）
-pub fn read_config<P: AsRef<Path>>(path: P) -> Result<Config> {
-    let file =
-        File::open(&path).with_context(|| format!("无法打开配置文件: {:?}", path.as_ref()))?;
-    let reader = BufReader::new(file);
-    let config: Config = serde_json::from_reader(reader)
-        .with_context(|| format!("解析 JSON 失败: {:?}", path.as_ref()))?;
-    Ok(config)
 }
 
 /// 确保 img/ 目录存在，并写入默认模板图片（嵌入在二进制中）
@@ -226,11 +91,12 @@ fn login_page() -> RawHtml<&'static str> {
     RawHtml(include_str!("../templates/login.html"))
 }
 
-/// 设置页 — 需要令牌鉴权，模板由 minijinja 渲染
+/// 设置页 — 需要令牌鉴权，模板由 minijinja 渲染（Environment 启动时预编译并注入）
 #[get("/settings")]
 async fn settings_page(
     config: &State<SharedConfig>,
     cookies: &CookieJar<'_>,
+    env: &State<Environment<'static>>,
 ) -> Result<RawHtml<String>, Redirect> {
     let c = config.read().await;
     let is_auth = cookies
@@ -242,10 +108,7 @@ async fn settings_page(
         return Err(Redirect::to("/login"));
     }
 
-    let mut env = Environment::new();
-    env.add_template("settings", include_str!("../templates/settings.html"))
-        .expect("Failed to compile settings template");
-    let tmpl = env.get_template("settings").unwrap();
+    let tmpl = env.get_template("settings").expect("设置页模板未注册");
     let html = tmpl
         .render(context! {
             config => &*c,
@@ -381,10 +244,37 @@ fn qr_png_response(data: &str) -> Result<(ContentType, Vec<u8>), Status> {
 /// 自动识别 P1/P2 位置（GPU 加速模板匹配）
 #[post("/detect_positions")]
 async fn detect_positions(config: &State<SharedConfig>) -> Json<serde_json::Value> {
-    let threshold = config.read().await.template_threshold as f32;
+    let (threshold, ratio_x, ratio_y, manual_dx, manual_dy) = {
+        let c = config.read().await;
+        (
+            c.template_threshold as f32,
+            c.p2_region_ratio_x,
+            c.p2_region_ratio_y,
+            c.p2_max_dx,
+            c.p2_max_dy,
+        )
+    };
 
     match detect::capture_screen() {
-        Ok(screen) => match detect::detect_p1p2(&screen, Path::new("img"), threshold) {
+        Ok(screen) => {
+            // 根据屏幕分辨率计算 P2 检测区大小：
+            // 手动值 >0 优先（检测不到分辨率 / 用户手动指定），否则按比例 × 分辨率
+            let (w, h) = (screen.width(), screen.height());
+            let max_dx = if manual_dx > 0 {
+                manual_dx
+            } else {
+                (w as f64 * ratio_x).round() as u32
+            };
+            let max_dy = if manual_dy > 0 {
+                manual_dy
+            } else {
+                (h as f64 * ratio_y).round() as u32
+            };
+            info!(
+                "[Detect] 屏幕 {w}x{h}，P2 检测区 {max_dx}x{max_dy} (比例 {ratio_x}/{ratio_y}, 手动 {manual_dx}/{manual_dy})"
+            );
+
+            match detect::detect_p1p2(&screen, Path::new("img"), threshold, max_dx, max_dy) {
             Ok((p1, p2)) => {
                 let mut resp = serde_json::json!({});
                 if let Some(p) = p1 {
@@ -399,7 +289,8 @@ async fn detect_positions(config: &State<SharedConfig>) -> Json<serde_json::Valu
                 Json(resp)
             }
             Err(e) => Json(serde_json::json!({"error": e.to_string()})),
-        },
+            }
+        }
         Err(e) => Json(serde_json::json!({"error": e.to_string()})),
     }
 }
@@ -416,6 +307,13 @@ async fn login(
         cookies.add_private(Cookie::new("auth_token", form.into_inner().token));
     }
     Json(serde_json::json!({"success": success}))
+}
+
+/// 登出：清除认证 cookie 并跳转登录页
+#[post("/logout")]
+fn logout(cookies: &CookieJar<'_>) -> Redirect {
+    cookies.remove_private(Cookie::from("auth_token"));
+    Redirect::to("/login")
 }
 
 /// 保存配置 — 接收表单数据，更新到内存并写入 config.json
@@ -440,87 +338,18 @@ async fn save_settings(
     let form = form.into_inner();
     let mut c = config.write().await;
 
-    // 辅助函数：解析 "X,Y" 格式坐标
-    fn parse_pair(s: &str) -> Option<[u32; 2]> {
-        let mut parts = s.splitn(2, ',');
-        let x: u32 = parts.next()?.trim().parse().ok()?;
-        let y: u32 = parts.next()?.trim().parse().ok()?;
-        Some([x, y])
+    // 应用表单（解析逻辑集中在 config::apply_settings）
+    crate::config::apply_settings(&mut c, &form);
+
+    // 校验配置合法性
+    if let Err(e) = c.validate() {
+        error!("[QRMai] 配置校验失败: {e}");
+        return Err(Status::UnprocessableEntity);
     }
 
-    for (key, value) in &form {
-        match key.as_str() {
-            "token" => c.token = value.clone(),
-            "qr_route" => c.qr_route = value.clone(),
-            "host" => c.host = value.clone(),
-            "port" => {
-                if let Ok(p) = value.parse() {
-                    c.port = p;
-                }
-            }
-            "cache_duration" => {
-                if let Ok(d) = value.parse() {
-                    c.cache_duration = d;
-                }
-            }
-            "standalone_mode" => c.standalone_mode = value == "true" || value == "on",
-            "skin_format" => c.skin_format = value.clone(),
-            "custom_skin_path" => c.custom_skin_path = value.clone(),
-            "custom_skin_qrcode_size" => {
-                if let Ok(s) = value.parse() {
-                    c.custom_skin_qrcode_size = s;
-                }
-            }
-            "custom_skin_qrcode_point" => {
-                if let Some(pt) = parse_pair(value) {
-                    c.custom_skin_qrcode_point = pt;
-                }
-            }
-            "decode.time" => {
-                if let Ok(t) = value.parse() {
-                    c.decode.time = t;
-                }
-            }
-            "decode.retry_count" => {
-                if let Ok(rc) = value.parse() {
-                    c.decode.retry_count = rc;
-                }
-            }
-            "wechat_bin" => c.wechat_bin = value.clone(),
-            "wechat_url_timeout" => {
-                if let Ok(t) = value.parse() {
-                    c.wechat_url_timeout = t;
-                }
-            }
-            "skin_mode" => c.skin_mode = value.clone(),
-            "skin_index" => {
-                if let Ok(i) = value.parse() {
-                    c.skin_index = i;
-                }
-            }
-            "p1" => {
-                if let Some(pt) = parse_pair(value) {
-                    c.p1 = pt;
-                }
-            }
-            "p2" => {
-                if let Some(pt) = parse_pair(value) {
-                    c.p2 = pt;
-                }
-            }
-            "capture_mode" => c.capture_mode = value.clone(),
-            _ => {}
-        }
-    }
-
-    // 如果表单中没有 standalone_mode 字段，说明开关被关闭了
-    if !form.contains_key("standalone_mode") {
-        c.standalone_mode = false;
-    }
-
-    // 写入配置文件
-    let json = serde_json::to_string_pretty(&*c).map_err(|_| Status::InternalServerError)?;
-    fs::write("config.json", json).map_err(|_| Status::InternalServerError)?;
+    // 写入配置文件（带说明的 TOML，注释常驻）
+    let toml_str = render_config_toml(&c);
+    fs::write("config.toml", toml_str).map_err(|_| Status::InternalServerError)?;
 
     Ok(Json(serde_json::json!({"success": true})))
 }
@@ -546,7 +375,7 @@ async fn qrmai_url_handler(
 
     // 在阻塞线程中执行网络请求 + 解码
     let qr_data = rocket::tokio::task::spawn_blocking(move || {
-        wechat::fetch_and_decode(&url)
+        fetch_and_decode(&url)
     })
     .await
     .map_err(|_| Status::InternalServerError)?
@@ -674,7 +503,7 @@ async fn main() -> Result<(), rocket::Error> {
     // ── 初始化日志系统 ──
     init_logger();
 
-    let config = load_or_create_config("config.json").expect("Failed to load or create config");
+    let config = load_or_create_config("config.toml").expect("Failed to load or create config");
 
     // ── 确保 img/ 目录及默认模板存在 ──
     ensure_img_dir();
@@ -693,10 +522,8 @@ async fn main() -> Result<(), rocket::Error> {
     let hijack = {
         match WechatHijack::init(&config.wechat_bin) {
             Ok(mut h) => {
-                if !h.is_wechat_alive() {
-                    if let Err(e) = h.launch_wechat() {
-                        error!("[QRMai] 微信启动失败: {e}，QR 功能不可用");
-                    }
+                if !h.is_wechat_alive() && let Err(e) = h.launch_wechat() {
+                    error!("[QRMai] 微信启动失败: {e}，QR 功能不可用");
                 }
                 Some(Arc::new(std::sync::Mutex::new(h)))
             }
@@ -714,6 +541,12 @@ async fn main() -> Result<(), rocket::Error> {
     let shared_config: SharedConfig = Arc::new(RwLock::new(config));
     let qr_cache: QrCache = Arc::new(RwLock::new(None));
 
+    // ── 预编译设置页模板（只初始化一次，请求时复用，避免每次重新编译） ──
+    let mut template_env = Environment::new();
+    template_env
+        .add_template("settings", include_str!("../templates/settings.html"))
+        .expect("Failed to compile settings template");
+
     let rocket_config = rocket::Config {
         address: IpAddr::from_str(&host).expect("Invalid host in config"),
         port,
@@ -724,6 +557,7 @@ async fn main() -> Result<(), rocket::Error> {
         .manage(shared_config)
         .manage(qr_cache)
         .manage(hijack_state)
+        .manage(template_env)
         .mount(&qr_route, routes![qrmai_handler, qrmai_url_handler])
         .mount(
             "/",
@@ -732,6 +566,7 @@ async fn main() -> Result<(), rocket::Error> {
                 login_page,
                 settings_page,
                 login,
+                logout,
                 save_settings,
                 mouse_position,
                 detect_positions
@@ -741,8 +576,38 @@ async fn main() -> Result<(), rocket::Error> {
     let _rocket = _rocket
         .mount("/img", FileServer::from("img"))
         .mount("/extension", FileServer::from("extension"))
+        .mount("/static", FileServer::from("static"))
         .launch()
         .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod ui_tests {
+    use super::*;
+
+    /// 设置页 / 登录页模板应能编译并渲染（minijinja 语法回归保护）
+    #[test]
+    fn templates_compile_and_render() {
+        let mut env = Environment::new();
+        env.add_template("settings", include_str!("../templates/settings.html"))
+            .expect("settings 模板编译失败");
+        env.add_template("login", include_str!("../templates/login.html"))
+            .expect("login 模板编译失败");
+
+        let c = crate::config::Config::default();
+        env.get_template("settings")
+            .unwrap()
+            .render(context! {
+                config => &c,
+                is_linux => cfg!(target_os = "linux"),
+            })
+            .expect("settings 渲染失败");
+
+        env.get_template("login")
+            .unwrap()
+            .render(context! {})
+            .expect("login 渲染失败");
+    }
 }

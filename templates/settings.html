@@ -1,780 +1,566 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>QRMai Settings</title>
-    <link rel="stylesheet" href="https://unpkg.com/mdui@2/mdui.css" />
-    <script src="https://unpkg.com/mdui@2/mdui.global.js"></script>
+    <title>QRMai 设置</title>
+    <link rel="icon" type="image/png" href="/static/icon.png">
+    <link rel="stylesheet" href="/static/tailwind.css">
+    <script>
+        // 主题初始化（避免闪烁）：localStorage 优先，其次跟随系统
+        (function () {
+            var t = localStorage.getItem('theme');
+            if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+                document.documentElement.classList.add('dark');
+            }
+        })();
+    </script>
     <style>
-        .setting-description {
-            color: #666;
-            font-size: 14px;
-            margin-bottom: 16px;
-        }
-
-        mdui-text-field,
-        mdui-switch,
-        mdui-segmented-button-group {
-            display: block;
-            margin-bottom: 16px;
-        }
-
-        mdui-switch {
-            margin-top: 8px;
-        }
-
-        /* 皮肤预览缩略图 */
-        .skin-preview {
-            width: 80px;
-            height: 80px;
-            object-fit: cover;
-            border: 2px solid #ddd;
-            border-radius: 6px;
-            margin: 4px;
-            cursor: pointer;
-            transition: border-color 0.2s;
-        }
-        .skin-preview:hover {
-            border-color: #4a90d9;
-        }
-        .skin-preview.selected {
-            border-color: #43a047;
-            box-shadow: 0 0 6px rgba(67, 160, 71, 0.4);
-        }
-
-        .skin-item {
-            display: inline-block;
-            position: relative;
-            margin: 4px;
-        }
-
-        .skin-delete-btn {
-            position: absolute;
-            top: -4px;
-            right: -4px;
-            width: 20px;
-            height: 20px;
-            border-radius: 50%;
-            background: #e53935;
-            color: #fff;
-            border: none;
-            font-size: 12px;
-            line-height: 20px;
-            text-align: center;
-            cursor: pointer;
-            opacity: 0;
-            transition: opacity 0.2s;
-        }
-        .skin-item:hover .skin-delete-btn {
-            opacity: 1;
-        }
-
-        .upload-row {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 12px;
-        }
-
-        .upload-status {
-            font-size: 13px;
-            color: #888;
-        }
-
-        .template-preview {
-            max-width: 120px;
-            max-height: 60px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            margin-right: 8px;
-            vertical-align: middle;
-        }
-
-        /* 移动端优化 */
-        @media (max-width: 768px) {
-            .settings-grid {
-                grid-template-columns: 1fr !important;
-                gap: 16px !important;
-            }
-
-            mdui-card {
-                margin: 8px !important;
-            }
-
-            .setting-description {
-                font-size: 13px;
-            }
-        }
-
-        .logout-btn {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            z-index: 1000;
-        }
+        /* 少量非 Tailwind 类（皮肤预览/状态色等动态切换的兜底） */
+        .skin-preview { width: 80px; height: 80px; object-fit: cover; border-radius: 6px; cursor: pointer; border: 2px solid transparent; }
+        .skin-preview.selected { border-color: #5E81AC; box-shadow: 0 0 0 2px rgba(94,129,172,.3); }
+        .skin-item { position: relative; display: inline-block; margin: 4px; }
+        .skin-delete-btn { position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; background: #BF616A; color: #fff; font-size: 12px; line-height: 20px; text-align: center; cursor: pointer; border: none; }
+        .template-preview { max-width: 120px; max-height: 60px; border-radius: 4px; margin-right: 8px; vertical-align: middle; }
     </style>
 </head>
+<body class="bg-nord-snow-2 dark:bg-nord-polar-0 min-h-screen text-nord-polar-1 dark:text-nord-snow-0">
 
-<body>
-    <mdui-container>
-        <mdui-button id="logoutBtn" class="logout-btn" variant="outlined">登出</mdui-button>
+    <!-- 顶栏 -->
+    <header class="bg-white dark:bg-nord-polar-1 shadow-sm sticky top-0 z-10 border-b border-nord-snow-0 dark:border-nord-polar-2">
+        <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <img src="/static/icon.png" alt="QRMai" class="w-8 h-8">
+                <h1 class="text-lg font-semibold">QRMai 设置</h1>
+            </div>
+            <div class="flex items-center gap-2">
+                <button id="themeToggle" type="button"
+                    class="px-3 py-1.5 rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 text-sm hover:bg-nord-snow-1 dark:hover:bg-nord-polar-2"
+                    title="切换深色/浅色模式">🌙/☀️</button>
+                <button id="logoutBtn" type="button"
+                    class="px-3 py-1.5 rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 text-sm hover:bg-nord-snow-1 dark:hover:bg-nord-polar-2">登出</button>
+            </div>
+        </div>
+    </header>
 
-        <div class="settings-grid"
-            style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px;">
-            <!-- 基本设置卡片 -->
-            <mdui-card>
-                <div style="padding: 24px;">
-                    <h2>基本设置</h2>
-                    <div class="setting-description">
-                        配置 QRMai 的基本参数。
+    <!-- 提示条 -->
+    <div id="toast"
+        class="fixed top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-sm text-white hidden"></div>
+
+    <main class="max-w-6xl mx-auto px-4 py-6">
+        <form id="settingsForm" method="post" action="/settings">
+            <div class="grid gap-6 md:grid-cols-2">
+
+                <!-- 服务设置 -->
+                <section class="bg-white dark:bg-nord-polar-1 rounded-xl shadow-sm border border-nord-snow-0 dark:border-nord-polar-2 p-6">
+                    <h2 class="text-base font-semibold mb-1">🖥️ 服务设置</h2>
+                    <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mb-4">服务监听与访问鉴权</p>
+                    <div class="grid gap-4">
+                        <div>
+                            <label class="block text-sm font-medium mb-1" for="token">访问令牌</label>
+                            <input id="token" name="token" type="text" value="{{ config.token }}"
+                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                            <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mt-1">登录令牌，同时用于浏览器扩展提交鉴权</p>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-sm font-medium mb-1" for="host">监听地址</label>
+                                <input id="host" name="host" type="text" value="{{ config.host }}"
+                                    class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mt-1">0.0.0.0 = 局域网可访问</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-1" for="port">端口</label>
+                                <input id="port" name="port" type="number" value="{{ config.port }}"
+                                    class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-1" for="qr_route">二维码访问路径</label>
+                            <input id="qr_route" name="qr_route" type="text" value="{{ config.qr_route }}"
+                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                            <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mt-1">例如 /qrmai、/qrcode</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-1" for="cache_duration">二维码缓存秒数</label>
+                            <input id="cache_duration" name="cache_duration" type="number" value="{{ config.cache_duration }}"
+                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                            <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mt-1">0 = 不缓存（预留功能）</p>
+                        </div>
                     </div>
-                    <form method="post" action="/settings" class="setting-form">
-                        <mdui-text-field label="访问令牌" name="token" value="{{ config.token }}"
-                            helper="访问二维码页面所需的令牌"></mdui-text-field>
-                        <mdui-text-field label="二维码访问路径" name="qr_route" value="{{ config.qr_route }}"
-                            helper="二维码服务的访问路径（例如：/qrmai, /qrcode）"></mdui-text-field>
-                        <mdui-text-field label="服务器地址" name="host" value="{{ config.host }}"
-                            helper="设置为0.0.0.0可内网访问"></mdui-text-field>
-                        <mdui-text-field label="服务器端口" name="port" value="{{ config.port }}" type="number"
-                            helper="服务器监听的端口号"></mdui-text-field>
-                        <mdui-text-field label="二维码缓存时间(秒)" name="cache_duration"
-                            value="{{ config.cache_duration }}" type="number"
-                            helper="二维码缓存时间，单位为秒"></mdui-text-field>
-                        <mdui-button type="submit" variant="filled">保存基本设置</mdui-button>
-                    </form>
-                </div>
-            </mdui-card>
+                </section>
 
-            <!-- 应用设置卡片 -->
-            <mdui-card>
-                <div style="padding: 24px;">
-                    <h2>应用设置</h2>
-                    <div class="setting-description">
-                        配置 QRMai 的应用程序相关参数。
+                <!-- 二维码获取方式 -->
+                <section class="bg-white dark:bg-nord-polar-1 rounded-xl shadow-sm border border-nord-snow-0 dark:border-nord-polar-2 p-6">
+                    <h2 class="text-base font-semibold mb-1">{% if is_linux %}🐧{% else %}🔗{% endif %} 二维码获取方式</h2>
+                    <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mb-4">选择如何捕获微信打开的二维码链接</p>
+                    <div class="grid gap-4">
+                        {% if is_linux %}
+                        <div>
+                            <label class="block text-sm font-medium mb-1" for="capture_mode">捕获模式</label>
+                            <select id="capture_mode" name="capture_mode"
+                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                <option value="hijack" {% if config.capture_mode == 'hijack' %}selected{% endif %}>🪝 xdg-open 劫持（Linux）</option>
+                                <option value="extension" {% if config.capture_mode == 'extension' %}selected{% endif %}>🧩 浏览器扩展（跨平台）</option>
+                            </select>
+                        </div>
+                        <div id="hijackFields">
+                            <div class="mb-3">
+                                <label class="block text-sm font-medium mb-1" for="wechat_bin">微信可执行文件路径</label>
+                                <input id="wechat_bin" name="wechat_bin" type="text" value="{{ config.wechat_bin }}"
+                                    class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-1" for="wechat_url_timeout">链接等待超时（秒）</label>
+                                <input id="wechat_url_timeout" name="wechat_url_timeout" type="number" value="{{ config.wechat_url_timeout }}"
+                                    class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                            </div>
+                        </div>
+                        {% else %}
+                        <p class="text-sm text-nord-polar-3 dark:text-nord-snow-1">
+                            当前平台仅支持「浏览器扩展」方式，请安装对应浏览器的扩展后使用。
+                        </p>
+                        {% endif %}
                     </div>
-                    <form method="post" action="/settings" class="setting-form">
-                        <label for="standalone_mode">舞萌丨中二公众号是否使用独立窗口显示</label>
-                        <mdui-switch name="standalone_mode" value="true" {% if config.standalone_mode
-                            %}checked{% endif %}></mdui-switch>
+                </section>
 
-                        <label for="skin_format">皮肤格式</label>
-                        <mdui-segmented-button-group selects="single" value="{{ config.skin_format }}"
-                            name="skin_format">
-                            <mdui-segmented-button value="new">新版皮肤</mdui-segmented-button>
-                            <mdui-segmented-button value="old">旧版皮肤</mdui-segmented-button>
-                            <mdui-segmented-button value="custom">自定义皮肤</mdui-segmented-button>
-                        </mdui-segmented-button-group>
+                <!-- 位置设置 -->
+                <section class="bg-white dark:bg-nord-polar-1 rounded-xl shadow-sm border border-nord-snow-0 dark:border-nord-polar-2 p-6">
+                    <h2 class="text-base font-semibold mb-1">📍 位置设置</h2>
+                    <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mb-4">坐标格式 X,Y（例如 1087,799），可自动识别</p>
 
-                        <div id="customSkinFields" style="display: {{ 'block' if config.skin_format == 'custom' else 'none' }};">
-                            <mdui-text-field label="皮肤路径" name="custom_skin_path"
-                                value="{{ config.custom_skin_path }}"
-                                helper="自定义皮肤的图片位置"></mdui-text-field>
-                            <mdui-text-field label="二维码大小" name="custom_skin_qrcode_size"
-                                value="{{ config.custom_skin_qrcode_size }}"
-                                helper="自定义皮肤的二维码大小"></mdui-text-field>
-                            <mdui-text-field label="二维码坐标" name="custom_skin_qrcode_point"
-                                value="{{ config.custom_skin_qrcode_point | join(",") }}"
-                                helper="自定义皮肤的二维码坐标"></mdui-text-field>
+                    <div class="mb-4 p-3 rounded-lg bg-nord-snow-1 dark:bg-nord-polar-2/50 text-xs text-nord-polar-2 dark:text-nord-snow-1">
+                        当前鼠标坐标：<span id="mouseX">0</span>, <span id="mouseY">0</span>
+                        <span class="text-nord-polar-3 dark:text-nord-snow-1">（网页全屏时准确）</span>
+                    </div>
+
+                    <div class="grid gap-4">
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-sm font-medium mb-1" for="p1">P1 坐标 (X,Y)</label>
+                                <input id="p1" name="p1" type="text" value="{{ config.p1 | join(',') }}"
+                                    class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-1" for="p2">P2 坐标 (X,Y)</label>
+                                <input id="p2" name="p2" type="text" value="{{ config.p2 | join(',') }}"
+                                    class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                            </div>
                         </div>
 
-                        <mdui-button type="submit" variant="filled">保存应用设置</mdui-button>
-                    </form>
-                </div>
-            </mdui-card>
+                        <div class="border-t border-nord-snow-0 dark:border-nord-polar-2 pt-3">
+                            <p class="text-xs font-medium text-nord-polar-3 dark:text-nord-snow-1 mb-2">P2 检测区（自动识别时）</p>
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-xs font-medium mb-1" for="p2_region_ratio_x">宽比例</label>
+                                    <input id="p2_region_ratio_x" name="p2_region_ratio_x" type="number" step="0.01" value="{{ config.p2_region_ratio_x }}"
+                                        class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium mb-1" for="p2_region_ratio_y">高比例</label>
+                                    <input id="p2_region_ratio_y" name="p2_region_ratio_y" type="number" step="0.01" value="{{ config.p2_region_ratio_y }}"
+                                        class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium mb-1" for="p2_max_dx">宽 (px, 0=自动)</label>
+                                    <input id="p2_max_dx" name="p2_max_dx" type="number" value="{{ config.p2_max_dx }}"
+                                        class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium mb-1" for="p2_max_dy">高 (px, 0=自动)</label>
+                                    <input id="p2_max_dy" name="p2_max_dy" type="number" value="{{ config.p2_max_dy }}"
+                                        class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                </div>
+                            </div>
+                            <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mt-1">比例 = 屏幕宽/高 × 值，自动适配分辨率；填像素值优先</p>
+                        </div>
 
-            <!-- 模板图片卡片 -->
-            <mdui-card>
-                <div style="padding: 24px;">
-                    <h2>🖼️ 模板图片</h2>
-                    <div class="setting-description">
-                        上传 P1/P2 的截图作为模板，用于 OpenCV 自动识别位置。<br>
-                        上传后覆盖默认模板，删除用户模板则回退到开发者默认模板。
+                        <div class="flex items-center gap-3">
+                            <button id="autoDetectBtn" type="button"
+                                class="px-4 py-2 rounded-lg bg-nord-frost-3 hover:bg-nord-frost-2 text-white text-sm font-medium">🔍 自动识别位置</button>
+                            <span id="detectStatus" class="text-xs text-nord-polar-3 dark:text-nord-snow-1"></span>
+                        </div>
                     </div>
+                </section>
 
-                    <!-- P1 模板 -->
-                    <div style="margin-bottom: 20px;">
-                        <strong>P1 — 生成二维码按钮</strong>
-                        <div class="upload-row">
-                            <img id="p1Preview" class="template-preview"
+                <!-- 解码设置 -->
+                <section class="bg-white dark:bg-nord-polar-1 rounded-xl shadow-sm border border-nord-snow-0 dark:border-nord-polar-2 p-6">
+                    <h2 class="text-base font-semibold mb-1">🔓 解码设置</h2>
+                    <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mb-4">识别失败时的重试参数</p>
+                    <div class="grid gap-4">
+                        <div>
+                            <label class="block text-sm font-medium mb-1" for="decode_time">超时时间（秒）</label>
+                            <input id="decode_time" name="decode.time" type="number" value="{{ config.decode.time }}"
+                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-1" for="decode_retry">重试次数</label>
+                            <input id="decode_retry" name="decode.retry_count" type="number" value="{{ config.decode.retry_count }}"
+                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 应用设置 -->
+                <section class="bg-white dark:bg-nord-polar-1 rounded-xl shadow-sm border border-nord-snow-0 dark:border-nord-polar-2 p-6">
+                    <h2 class="text-base font-semibold mb-1">⚙️ 应用设置</h2>
+                    <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mb-4">窗口与皮肤相关参数</p>
+                    <div class="grid gap-4">
+                        <label class="flex items-center gap-2 text-sm">
+                            <input type="checkbox" name="standalone_mode" value="true" {% if config.standalone_mode %}checked{% endif %}
+                                class="w-4 h-4 rounded border-nord-snow-0 text-nord-frost-3 focus:ring-nord-frost-2">
+                            独立窗口显示二维码
+                        </label>
+                        <div>
+                            <label class="block text-sm font-medium mb-1" for="skin_format">皮肤格式</label>
+                            <select id="skin_format" name="skin_format"
+                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                <option value="new" {% if config.skin_format == 'new' %}selected{% endif %}>新版皮肤</option>
+                                <option value="old" {% if config.skin_format == 'old' %}selected{% endif %}>旧版皮肤</option>
+                                <option value="custom" {% if config.skin_format == 'custom' %}selected{% endif %}>自定义皮肤</option>
+                            </select>
+                        </div>
+                        <div id="customSkinFields" class="grid gap-3 {% if config.skin_format != 'custom' %}hidden{% endif %}">
+                            <div>
+                                <label class="block text-xs font-medium mb-1" for="custom_skin_path">皮肤图片路径</label>
+                                <input id="custom_skin_path" name="custom_skin_path" type="text" value="{{ config.custom_skin_path }}"
+                                    class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                            </div>
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-xs font-medium mb-1" for="custom_skin_qrcode_size">二维码大小</label>
+                                    <input id="custom_skin_qrcode_size" name="custom_skin_qrcode_size" type="number" value="{{ config.custom_skin_qrcode_size }}"
+                                        class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium mb-1" for="custom_skin_qrcode_point">二维码坐标 (X,Y)</label>
+                                    <input id="custom_skin_qrcode_point" name="custom_skin_qrcode_point" type="text" value="{{ config.custom_skin_qrcode_point | join(',') }}"
+                                        class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 模板图片 -->
+                <section class="bg-white dark:bg-nord-polar-1 rounded-xl shadow-sm border border-nord-snow-0 dark:border-nord-polar-2 p-6">
+                    <h2 class="text-base font-semibold mb-1">🖼️ 模板图片</h2>
+                    <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mb-4">P1/P2 截图模板，用于自动识别位置；上传覆盖默认模板</p>
+
+                    <div class="grid gap-4">
+                        <div class="flex items-center gap-3">
+                            <img id="p1Preview" class="template-preview bg-nord-snow-1 dark:bg-nord-polar-2"
                                 src="{% if config.p1_image %}/img/p1_user.png{% else %}/img/p1.png{% endif %}"
-                                alt="P1 模板"
-                                onerror="this.style.display='none'"
-                                style="display: inline;">
-                            <input type="file" id="p1FileInput" accept="image/png" style="display:none;">
-                            <mdui-button id="p1UploadBtn" variant="outlined" type="button">
-                                📤 上传 P1 模板
-                            </mdui-button>
-                            <mdui-button id="p1DeleteBtn" variant="text" type="button"
-                                style="display: {% if config.p1_image %}inline-flex{% else %}none{% endif %};">
-                                🗑 删除
-                            </mdui-button>
-                            <span class="upload-status" id="p1Status"></span>
+                                alt="P1 模板" onerror="this.style.display='none'">
+                            <div>
+                                <p class="text-sm font-medium">P1 — 生成二维码按钮</p>
+                                <div class="flex gap-2 mt-1">
+                                    <input type="file" id="p1FileInput" accept="image/png" class="hidden">
+                                    <button id="p1UploadBtn" type="button"
+                                        class="px-3 py-1.5 rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 text-xs hover:bg-nord-snow-1 dark:hover:bg-nord-polar-2">📤 上传</button>
+                                    <button id="p1DeleteBtn" type="button"
+                                        class="px-3 py-1.5 rounded-lg border border-nord-aurora-red dark:border-nord-aurora-red text-xs text-nord-aurora-red dark:text-nord-aurora-red hover:bg-nord-aurora-red/10 dark:hover:bg-nord-aurora-red/20 {% if not config.p1_image %}hidden{% endif %}">🗑 删除</button>
+                                </div>
+                                <span id="p1Status" class="text-xs text-nord-polar-3 dark:text-nord-snow-1"></span>
+                            </div>
                         </div>
-                    </div>
 
-                    <!-- P2 模板 -->
-                    <div>
-                        <strong>P2 — 二维码消息</strong>
-                        <div class="upload-row">
-                            <img id="p2Preview" class="template-preview"
+                        <div class="flex items-center gap-3">
+                            <img id="p2Preview" class="template-preview bg-nord-snow-1 dark:bg-nord-polar-2"
                                 src="{% if config.p2_image %}/img/p2_user.png{% else %}/img/p2.png{% endif %}"
-                                alt="P2 模板"
-                                onerror="this.style.display='none'"
-                                style="display: inline;">
-                            <input type="file" id="p2FileInput" accept="image/png" style="display:none;">
-                            <mdui-button id="p2UploadBtn" variant="outlined" type="button">
-                                📤 上传 P2 模板
-                            </mdui-button>
-                            <mdui-button id="p2DeleteBtn" variant="text" type="button"
-                                style="display: {% if config.p2_image %}inline-flex{% else %}none{% endif %};">
-                                🗑 删除
-                            </mdui-button>
-                            <span class="upload-status" id="p2Status"></span>
+                                alt="P2 模板" onerror="this.style.display='none'">
+                            <div>
+                                <p class="text-sm font-medium">P2 — 二维码消息</p>
+                                <div class="flex gap-2 mt-1">
+                                    <input type="file" id="p2FileInput" accept="image/png" class="hidden">
+                                    <button id="p2UploadBtn" type="button"
+                                        class="px-3 py-1.5 rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 text-xs hover:bg-nord-snow-1 dark:hover:bg-nord-polar-2">📤 上传</button>
+                                    <button id="p2DeleteBtn" type="button"
+                                        class="px-3 py-1.5 rounded-lg border border-nord-aurora-red dark:border-nord-aurora-red text-xs text-nord-aurora-red dark:text-nord-aurora-red hover:bg-nord-aurora-red/10 dark:hover:bg-nord-aurora-red/20 {% if not config.p2_image %}hidden{% endif %}">🗑 删除</button>
+                                </div>
+                                <span id="p2Status" class="text-xs text-nord-polar-3 dark:text-nord-snow-1"></span>
+                            </div>
                         </div>
                     </div>
+                </section>
 
-                </div>
-            </mdui-card>
+                <!-- 皮肤管理 -->
+                <section class="bg-white dark:bg-nord-polar-1 rounded-xl shadow-sm border border-nord-snow-0 dark:border-nord-polar-2 p-6">
+                    <h2 class="text-base font-semibold mb-1">🎨 皮肤管理</h2>
+                    <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mb-4">上传多个皮肤，可选择随机或固定使用</p>
 
-            <!-- 皮肤管理卡片 -->
-            <mdui-card>
-                <div style="padding: 24px;">
-                    <h2>🎨 皮肤管理</h2>
-                    <div class="setting-description">
-                        上传多个皮肤图片，可选择随机切换或固定使用某一个。
-                    </div>
-
-                    <!-- 皮肤列表 -->
-                    <div id="skinList" style="margin-bottom: 16px; min-height: 40px;">
+                    <div id="skinList" class="mb-4 min-h-10">
                         {% set skins = config.skin_images %}
                         {% if skins %}
                             {% for s in skins %}
                             <div class="skin-item" data-filename="{{ s }}">
                                 <img class="skin-preview {% if config.skin_index == loop.index0 and config.skin_mode == 'fixed' %}selected{% endif %}"
-                                    src="/img/{{ s }}" alt="{{ s }}"
-                                    title="{{ s }}"
+                                    src="/img/{{ s }}" alt="{{ s }}" title="{{ s }}"
                                     onclick="selectSkin('{{ s }}', {{ loop.index0 }})">
-                                <button class="skin-delete-btn" title="删除" onclick="event.stopPropagation(); deleteSkin('{{ s }}')">✕</button>
+                                <button type="button" class="skin-delete-btn" title="删除"
+                                    onclick="event.stopPropagation(); deleteSkin('{{ s }}')">✕</button>
                             </div>
                             {% endfor %}
                         {% else %}
-                            <span style="color: #aaa;">暂无皮肤，请上传</span>
+                            <span class="text-xs text-nord-polar-3 dark:text-nord-snow-1">暂无皮肤，请上传</span>
                         {% endif %}
                     </div>
 
-                    <!-- 上传皮肤 -->
-                    <div class="upload-row">
-                        <input type="file" id="skinFileInput" accept="image/png" style="display:none;">
-                        <mdui-button id="skinUploadBtn" variant="outlined" type="button">
-                            📤 上传皮肤
-                        </mdui-button>
-                        <span class="upload-status" id="skinStatus"></span>
+                    <div class="flex items-center gap-3 mb-4">
+                        <input type="file" id="skinFileInput" accept="image/png" class="hidden">
+                        <button id="skinUploadBtn" type="button"
+                            class="px-3 py-1.5 rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 text-xs hover:bg-nord-snow-1 dark:hover:bg-nord-polar-2">📤 上传皮肤</button>
+                        <span id="skinStatus" class="text-xs text-nord-polar-3 dark:text-nord-snow-1"></span>
                     </div>
 
-                    <!-- 皮肤模式 -->
-                    <form method="post" action="/settings" class="setting-form" style="margin-top: 16px;">
-                        <label>皮肤选择模式</label>
-                        <mdui-segmented-button-group selects="single"
-                            value="{{ config.skin_mode }}" name="skin_mode"
-                            id="skinModeGroup">
-                            <mdui-segmented-button value="random">🎲 随机</mdui-segmented-button>
-                            <mdui-segmented-button value="fixed">📍 固定</mdui-segmented-button>
-                        </mdui-segmented-button-group>
-
-                        <input type="hidden" name="skin_index" id="skinIndexInput"
-                            value="{{ config.skin_index }}">
-
-                        <mdui-button type="submit" variant="filled">保存皮肤设置</mdui-button>
-                    </form>
-                </div>
-            </mdui-card>
-
-            <!-- 位置设置卡片 -->
-            <mdui-card>
-                <div style="padding: 24px;">
-                    <h2>位置设置</h2>
-                    <div class="setting-description">
-                        请根据您的屏幕分辨率调整以下坐标值。坐标格式为 X,Y（例如：1087,799）
-                    </div>
-                    <div id="mousePosition"
-                        style="margin-bottom: 16px; padding: 8px; background-color: #f5f5f5; border-radius: 4px;">
-                        当前鼠标坐标: <span id="mouseX">0</span>, <span id="mouseY">0</span><br>
-                        只有在网页全屏后才能正确显示鼠标坐标
-                    </div>
-                    <form method="post" action="/settings" class="setting-form">
-                        <mdui-text-field label="P1坐标(X,Y)" name="p1" value="{{ config.p1 | join(",") }}"
-                            helper="舞萌|中二服务号生成二维码按钮的位置"></mdui-text-field>
-                        <mdui-text-field label="P2坐标(X,Y)" name="p2" value="{{ config.p2 | join(",") }}"
-                            helper="生成后的二维码的消息的位置"></mdui-text-field>
-
-                        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
-                            <mdui-button id="autoDetectBtn" variant="outlined" type="button">
-                                🔍 自动识别位置
-                            </mdui-button>
-                            <span id="detectStatus" style="font-size: 14px; color: #888;"></span>
+                    <div class="grid gap-3">
+                        <div>
+                            <label class="block text-sm font-medium mb-1" for="skin_mode">皮肤选择模式</label>
+                            <select id="skin_mode" name="skin_mode"
+                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                <option value="random" {% if config.skin_mode == 'random' %}selected{% endif %}>🎲 随机</option>
+                                <option value="fixed" {% if config.skin_mode == 'fixed' %}selected{% endif %}>📍 固定</option>
+                            </select>
                         </div>
-
-                        <mdui-button type="submit" variant="filled">保存位置设置</mdui-button>
-                    </form>
-                </div>
-            </mdui-card>
-
-            <!-- 解码设置卡片 -->
-            <mdui-card>
-                <div style="padding: 24px;">
-                    <h2>解码设置</h2>
-                    <div class="setting-description">
-                        当程序无法正确识别二维码时，会根据以下设置进行重试
+                        <input type="hidden" name="skin_index" id="skinIndexInput" value="{{ config.skin_index }}">
                     </div>
-                    <form method="post" action="/settings" class="setting-form">
-                        <mdui-text-field label="超时时间(秒)" name="decode.time"
-                            value="{{ config.decode.time }}" type="number"
-                            helper="二维码解码超时时间"></mdui-text-field>
-                        <mdui-text-field label="重试次数" name="decode.retry_count"
-                            value="{{ config.decode.retry_count }}" type="number"
-                            helper="二维码解码重试次数"></mdui-text-field>
-                        <mdui-button type="submit" variant="filled">保存解码设置</mdui-button>
-                    </form>
-                </div>
-            </mdui-card>
+                </section>
 
-            <!-- 二维码获取方式 设置卡片 -->
-            <mdui-card>
-                <div style="padding: 24px;">
-                    <h2>{% if is_linux %}🐧{% else %}🔗{% endif %} 二维码获取方式</h2>
-                    <div class="setting-description">
-                        选择如何捕获微信打开的二维码链接
+                <!-- 浏览器扩展说明 -->
+                <section class="bg-white dark:bg-nord-polar-1 rounded-xl shadow-sm border border-nord-snow-0 dark:border-nord-polar-2 p-6">
+                    <h2 class="text-base font-semibold mb-1">🧩 浏览器扩展</h2>
+                    <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mb-4">安装后微信打开的二维码链接会被自动拦截转发（Chrome / Edge / Firefox）</p>
+                    <ol class="list-decimal list-inside text-sm text-nord-polar-2 dark:text-nord-snow-1 space-y-1 mb-4">
+                        <li>打开浏览器扩展管理页，开启「开发者模式」</li>
+                        <li>点击「加载已解压的扩展」，选择 <code class="text-xs bg-nord-snow-1 dark:bg-nord-polar-2 px-1 rounded">extension/</code> 文件夹</li>
+                        <li>点击扩展图标 → 选项，确认服务端地址和令牌正确</li>
+                    </ol>
+                    <div class="p-3 rounded-lg bg-nord-snow-1 dark:bg-nord-polar-2/50 text-xs text-nord-polar-2 dark:text-nord-snow-1">
+                        <p>服务端地址：<code class="px-1 rounded bg-nord-snow-0 dark:bg-nord-polar-3">{{ config.host }}:{{ config.port }}</code></p>
+                        <p>路由前缀：<code class="px-1 rounded bg-nord-snow-0 dark:bg-nord-polar-3">{{ config.qr_route }}</code></p>
+                        <p>访问令牌：<code class="px-1 rounded bg-nord-snow-0 dark:bg-nord-polar-3">{{ config.token }}</code></p>
                     </div>
-                    <form method="post" action="/settings" class="setting-form">
-                        {% if is_linux %}
-                        <label>捕获模式</label>
-                        <mdui-segmented-button-group selects="single"
-                            value="{{ config.capture_mode }}" name="capture_mode"
-                            id="captureModeGroup">
-                            <mdui-segmented-button value="hijack">
-                                🪝 xdg-open 劫持
-                            </mdui-segmented-button>
-                            <mdui-segmented-button value="extension">
-                                🧩 浏览器扩展
-                            </mdui-segmented-button>
-                        </mdui-segmented-button-group>
-                        <input type="hidden" name="capture_mode" id="captureModeInput"
-                            value="{{ config.capture_mode }}">
+                </section>
 
-                        <div id="hijackFields" style="margin-top: 16px; display: {{ 'block' if config.capture_mode == 'hijack' else 'none' }};">
-                            <mdui-text-field label="微信可执行文件路径" name="wechat_bin"
-                                value="{{ config.wechat_bin }}"
-                                helper="Linux 微信客户端的绝对路径"></mdui-text-field>
-                            <mdui-text-field label="链接等待超时(秒)" name="wechat_url_timeout"
-                                value="{{ config.wechat_url_timeout }}" type="number"
-                                helper="等待微信打开链接的最长时间"></mdui-text-field>
-                        </div>
-                        {% else %}
-                        <p style="color: #666; font-size: 14px;">
-                            当前平台仅支持「浏览器扩展」方式。请安装对应浏览器的扩展后使用。
-                        </p>
-                        {% endif %}
-
-                        <mdui-button type="submit" variant="filled" style="margin-top: 16px;">
-                            保存设置
-                        </mdui-button>
-                    </form>
-                </div>
-            </mdui-card>
-
-            <!-- 浏览器扩展安装说明 -->
-            <mdui-card>
-                <div style="padding: 24px;">
-                    <h2>🧩 浏览器扩展</h2>
-                    <div class="setting-description">
-                        安装浏览器扩展后，微信打开的二维码链接会被自动拦截并转发到服务端。<br>
-                        支持 Chrome / Edge / Firefox。
+                <!-- 关于 -->
+                <section class="bg-white dark:bg-nord-polar-1 rounded-xl shadow-sm border border-nord-snow-0 dark:border-nord-polar-2 p-6">
+                    <h2 class="text-base font-semibold mb-1">ℹ️ 关于</h2>
+                    <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mb-4">
+                        项目地址：<a href="https://github.com/SodaCodeSave/QRmai" target="_blank" class="text-nord-frost-2 dark:text-nord-frost-1 underline">GitHub</a>
+                    </p>
+                    <div class="flex gap-2">
+                        <button id="checkUpdateBtn" type="button"
+                            class="px-3 py-1.5 rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 text-xs hover:bg-nord-snow-1 dark:hover:bg-nord-polar-2">检查更新</button>
+                        <button id="manualUpdateBtn" type="button"
+                            class="px-3 py-1.5 rounded-lg bg-nord-frost-3 hover:bg-nord-frost-2 text-white text-xs font-medium">手动更新</button>
                     </div>
-
-                    <div style="margin-bottom: 12px;">
-                        <strong>安装步骤：</strong>
-                        <ol style="margin: 8px 0 0 20px; font-size: 14px; color: #555;">
-                            <li>打开浏览器扩展管理页面，开启「开发者模式」</li>
-                            <li>点击「加载已解压的扩展」，选择程序目录下的 <code>extension/</code> 文件夹</li>
-                            <li>点击扩展图标 → 选项，确认服务端地址和令牌正确</li>
-                        </ol>
-                    </div>
-
-                    <div style="padding: 12px; background: #f5f5f5; border-radius: 6px; font-size: 13px;">
-                        <strong>扩展配置参数：</strong><br>
-                        服务端地址: <code>{{ config.host }}:{{ config.port }}</code><br>
-                        路由前缀: <code>{{ config.qr_route }}</code><br>
-                        访问令牌: <code>{{ config.token }}</code>
-                    </div>
-                </div>
-            </mdui-card>
-        </div>
-
-        <mdui-card style="margin-top: 24px;">
-            <div style="padding: 24px;">
-                <h2>关于</h2>
-                <div class="setting-description">
-                    本来这里是我们的qq群的<br>
-                    但是我觉得像街边的小广告一样看着很难受<br>
-                    改成我们的<a href="https://github.com/SodaCodeSave/QRmai" target="_blank">Github地址</a>吧
-                </div>
-                <mdui-button id="checkUpdateBtn" variant="outlined">检查更新</mdui-button>
-                <mdui-button id="manualUpdateBtn" variant="filled" color="primary"
-                    style="margin-left: 8px;">手动更新</mdui-button>
-                <div id="updateStatus" style="margin-top: 16px; display: none;"></div>
+                    <div id="updateStatus" class="mt-3 text-xs text-nord-polar-2 dark:text-nord-snow-1 hidden"></div>
+                </section>
             </div>
-        </mdui-card>
-    </mdui-container>
+
+            <!-- 保存栏 -->
+            <div class="mt-6 flex justify-end">
+                <button type="submit"
+                    class="px-6 py-2.5 rounded-lg bg-nord-frost-3 hover:bg-nord-frost-2 text-white text-sm font-medium shadow">
+                    💾 保存全部设置
+                </button>
+            </div>
+        </form>
+    </main>
 
     <script>
-        // ================================================================
-        // 实时鼠标坐标
-        // ================================================================
+        // ================= 主题切换 =================
+        document.getElementById('themeToggle').addEventListener('click', function () {
+            var dark = document.documentElement.classList.toggle('dark');
+            localStorage.setItem('theme', dark ? 'dark' : 'light');
+        });
+
+        // ================= 轻量 toast =================
+        var toastEl = document.getElementById('toast');
+        var toastTimer = null;
+        function toast(msg, ok) {
+            toastEl.textContent = msg;
+            toastEl.className = 'fixed top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-sm text-white '
+                + (ok === false ? 'bg-nord-aurora-red' : 'bg-nord-aurora-green');
+            toastEl.classList.remove('hidden');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(function () { toastEl.classList.add('hidden'); }, 2500);
+        }
+
+        // ================= 表单提交（fetch，避免整页刷新） =================
+        document.getElementById('settingsForm').addEventListener('submit', function (e) {
+            e.preventDefault();
+            var params = new URLSearchParams(new FormData(this));
+            fetch('/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: params
+            })
+            .then(function (r) {
+                if (r.ok) { toast('设置已保存'); }
+                else if (r.status === 403) { toast('认证失败，请重新登录', false); setTimeout(function () { location.href = '/login'; }, 1200); }
+                else if (r.status === 422) { toast('配置校验失败，请检查输入', false); }
+                else { toast('保存失败', false); }
+            })
+            .catch(function () { toast('网络错误', false); });
+        });
+
+        // ================= 显隐联动 =================
+        document.getElementById('skin_format').addEventListener('change', function () {
+            document.getElementById('customSkinFields').classList.toggle('hidden', this.value !== 'custom');
+        });
+        var captureMode = document.getElementById('capture_mode');
+        if (captureMode) {
+            captureMode.addEventListener('change', function () {
+                document.getElementById('hijackFields').classList.toggle('hidden', this.value !== 'hijack');
+            });
+        }
+
+        // ================= 实时鼠标坐标 =================
         document.addEventListener('mousemove', function (e) {
             document.getElementById('mouseX').textContent = e.clientX;
             document.getElementById('mouseY').textContent = e.clientY;
         });
 
-        // ================================================================
-        // 自定义皮肤字段显隐
-        // ================================================================
-        document.querySelector('mdui-segmented-button-group[name="skin_format"]')
-            .addEventListener('change', function () {
-                const fields = document.getElementById('customSkinFields');
-                fields.style.display = (this.value === 'custom') ? 'block' : 'none';
-            });
-
-        // ================================================================
-        // 捕获模式切换（劫持 / 扩展）
-        // ================================================================
-        const captureGroup = document.getElementById('captureModeGroup');
-        if (captureGroup) {
-            captureGroup.addEventListener('change', function () {
-                // 同步隐藏 input（确保 FormData 收集到值）
-                const hidden = document.getElementById('captureModeInput');
-                if (hidden) hidden.value = this.value;
-
-                const hijackFields = document.getElementById('hijackFields');
-                if (hijackFields) {
-                    hijackFields.style.display = (this.value === 'hijack') ? 'block' : 'none';
-                }
-            });
-        }
-
-        // ================================================================
-        // 表单提交
-        // ================================================================
-        document.querySelectorAll('.setting-form').forEach(form => {
-            form.addEventListener('submit', function (e) {
-                e.preventDefault();
-                const formData = new FormData(this);
-                const params = new URLSearchParams(formData);
-
-                fetch('/settings', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: params
+        // ================= 自动识别位置 =================
+        document.getElementById('autoDetectBtn').addEventListener('click', function () {
+            var btn = this, status = document.getElementById('detectStatus');
+            btn.disabled = true; btn.textContent = '识别中...';
+            status.textContent = '正在截图并识别，请稍候...';
+            fetch('/detect_positions', { method: 'POST' })
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    btn.disabled = false; btn.textContent = '🔍 自动识别位置';
+                    if (data.error) { status.textContent = '✗ ' + data.error; return; }
+                    if (data.p1) document.getElementById('p1').value = data.p1.join(',');
+                    if (data.p2) document.getElementById('p2').value = data.p2.join(',');
+                    var parts = [];
+                    if (data.p1) parts.push('P1=[' + data.p1.join(',') + ']');
+                    if (data.p2) parts.push('P2=[' + data.p2.join(',') + ']');
+                    status.textContent = '✓ ' + parts.join('  ');
+                    toast('坐标已填入，请核对后保存');
                 })
-                .then(response => {
-                    if (response.ok) {
-                        mdui.snackbar({ message: '设置已保存', placement: 'top' });
-                    } else if (response.status === 403) {
-                        mdui.snackbar({ message: '认证失败，请重新登录', placement: 'top' });
-                        setTimeout(() => { window.location.href = '/login'; }, 1500);
-                    } else {
-                        mdui.snackbar({ message: '保存失败', placement: 'top' });
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    mdui.snackbar({ message: '网络错误', placement: 'top' });
+                .catch(function (err) {
+                    btn.disabled = false; btn.textContent = '🔍 自动识别位置';
+                    status.textContent = '✗ ' + err.message;
                 });
-            });
         });
 
-        // ================================================================
-        // 皮肤选择
-        // ================================================================
-        function selectSkin(filename, index) {
-            // 切换为固定模式
-            const modeGroup = document.getElementById('skinModeGroup');
-            modeGroup.value = 'fixed';
-            document.getElementById('skinIndexInput').value = index;
-
-            // 高亮选中
-            document.querySelectorAll('.skin-preview').forEach(img => img.classList.remove('selected'));
-            const target = document.querySelector(`.skin-item[data-filename="${filename}"] .skin-preview`);
-            if (target) target.classList.add('selected');
-        }
-
-        // ================================================================
-        // 文件上传通用函数
-        // ================================================================
+        // ================= 文件上传通用 =================
         function uploadFile(url, fileInput, statusEl, onSuccess) {
-            const file = fileInput.files[0];
-            if (!file) {
-                mdui.snackbar({ message: '请先选择文件', placement: 'top' });
-                return;
-            }
-
-            const formData = new FormData();
-            formData.append('file', file);
-
+            var file = fileInput.files[0];
+            if (!file) { toast('请先选择文件', false); return; }
+            var fd = new FormData();
+            fd.append('file', file);
             statusEl.textContent = '上传中...';
-            statusEl.style.color = '#888';
-
-            fetch(url, { method: 'POST', body: formData })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.error) {
-                        statusEl.textContent = '✗ ' + data.error;
-                        statusEl.style.color = '#e53935';
-                        return;
-                    }
+            fetch(url, { method: 'POST', body: fd })
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    if (data.error) { statusEl.textContent = '✗ ' + data.error; return; }
                     statusEl.textContent = '✓ 上传成功';
-                    statusEl.style.color = '#43a047';
                     if (onSuccess) onSuccess(data);
                 })
-                .catch(error => {
-                    statusEl.textContent = '✗ 网络错误';
-                    statusEl.style.color = '#e53935';
-                    console.error('Upload error:', error);
-                })
-                .finally(() => {
-                    fileInput.value = '';
-                });
+                .catch(function () { statusEl.textContent = '✗ 上传失败'; })
+                .finally(function () { fileInput.value = ''; });
         }
-
-        // ── P1 上传 ──
-        document.getElementById('p1UploadBtn').addEventListener('click', function () {
-            document.getElementById('p1FileInput').click();
-        });
+        // P1 / P2 / 皮肤上传
+        document.getElementById('p1UploadBtn').addEventListener('click', function () { document.getElementById('p1FileInput').click(); });
         document.getElementById('p1FileInput').addEventListener('change', function () {
-            uploadFile('/upload_p1', this, document.getElementById('p1Status'), function (data) {
-                const preview = document.getElementById('p1Preview');
-                preview.src = '/img/p1_user.png?t=' + Date.now();
-                preview.style.display = 'inline';
-                document.getElementById('p1DeleteBtn').style.display = 'inline-flex';
+            uploadFile('/upload_p1', this, document.getElementById('p1Status'), function () {
+                var p = document.getElementById('p1Preview');
+                p.src = '/img/p1_user.png?t=' + Date.now(); p.style.display = 'inline';
+                document.getElementById('p1DeleteBtn').classList.remove('hidden');
             });
         });
-
-        // ── P1 删除 ──
-        document.getElementById('p1DeleteBtn').addEventListener('click', function () {
-            fetch('/delete_skin', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ filename: 'p1_user.png' })
-            })
-            .then(r => r.json())
-            .then(data => {
-                if (data.success) {
-                    document.getElementById('p1Preview').src = '/img/p1.png';
-                    document.getElementById('p1DeleteBtn').style.display = 'none';
-                    document.getElementById('p1Status').textContent = '已删除用户模板';
-                    document.getElementById('p1Status').style.color = '#888';
-                }
-            });
-        });
-
-        // ── P2 上传 ──
-        document.getElementById('p2UploadBtn').addEventListener('click', function () {
-            document.getElementById('p2FileInput').click();
-        });
+        document.getElementById('p2UploadBtn').addEventListener('click', function () { document.getElementById('p2FileInput').click(); });
         document.getElementById('p2FileInput').addEventListener('change', function () {
-            uploadFile('/upload_p2', this, document.getElementById('p2Status'), function (data) {
-                const preview = document.getElementById('p2Preview');
-                preview.src = '/img/p2_user.png?t=' + Date.now();
-                preview.style.display = 'inline';
-                document.getElementById('p2DeleteBtn').style.display = 'inline-flex';
+            uploadFile('/upload_p2', this, document.getElementById('p2Status'), function () {
+                var p = document.getElementById('p2Preview');
+                p.src = '/img/p2_user.png?t=' + Date.now(); p.style.display = 'inline';
+                document.getElementById('p2DeleteBtn').classList.remove('hidden');
             });
         });
-
-        // ── P2 删除 ──
-        document.getElementById('p2DeleteBtn').addEventListener('click', function () {
-            fetch('/delete_skin', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ filename: 'p2_user.png' })
-            })
-            .then(r => r.json())
-            .then(data => {
-                if (data.success) {
-                    document.getElementById('p2Preview').src = '/img/p2.png';
-                    document.getElementById('p2DeleteBtn').style.display = 'none';
-                    document.getElementById('p2Status').textContent = '已删除用户模板';
-                    document.getElementById('p2Status').style.color = '#888';
-                }
-            });
-        });
-
-        // ── 皮肤上传 ──
-        document.getElementById('skinUploadBtn').addEventListener('click', function () {
-            document.getElementById('skinFileInput').click();
-        });
+        document.getElementById('skinUploadBtn').addEventListener('click', function () { document.getElementById('skinFileInput').click(); });
         document.getElementById('skinFileInput').addEventListener('change', function () {
-            uploadFile('/upload_skin', this, document.getElementById('skinStatus'), function (data) {
-                // 刷新皮肤列表
-                refreshSkinList();
-            });
+            uploadFile('/upload_skin', this, document.getElementById('skinStatus'), function () { location.reload(); });
         });
 
-        // ── 删除皮肤 ──
-        function deleteSkin(filename) {
-            if (!confirm('确定要删除皮肤 ' + filename + ' 吗？')) return;
-
+        // 删除模板/皮肤
+        function deleteNamed(filename, previewFallback, statusEl, delBtn) {
             fetch('/delete_skin', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ filename: filename })
             })
-            .then(r => r.json())
-            .then(data => {
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
                 if (data.success) {
-                    refreshSkinList();
+                    if (previewFallback) {
+                        document.getElementById(previewFallback).src = '/img/' + filename.replace('_user', '') + '.png';
+                        if (delBtn) delBtn.classList.add('hidden');
+                    }
+                    if (statusEl) statusEl.textContent = '已删除';
+                    else location.reload();
                 }
             });
         }
-
-        function refreshSkinList() {
-            // 重新加载页面以获取最新的皮肤列表
-            // 这确保了 skin_images 和 UI 同步
-            window.location.reload();
+        document.getElementById('p1DeleteBtn').addEventListener('click', function () {
+            deleteNamed('p1_user.png', 'p1Preview', document.getElementById('p1Status'), this);
+        });
+        document.getElementById('p2DeleteBtn').addEventListener('click', function () {
+            deleteNamed('p2_user.png', 'p2Preview', document.getElementById('p2Status'), this);
+        });
+        function deleteSkin(filename) {
+            if (!confirm('确定要删除皮肤 ' + filename + ' 吗？')) return;
+            deleteNamed(filename, null, null, null);
         }
 
-        // ================================================================
-        // OpenCV 自动识别位置
-        // ================================================================
-        const autoDetectBtn = document.getElementById('autoDetectBtn');
-        const detectStatus = document.getElementById('detectStatus');
-        const p1Field = document.querySelector('mdui-text-field[name="p1"]');
-        const p2Field = document.querySelector('mdui-text-field[name="p2"]');
+        // ================= 皮肤选择 =================
+        function selectSkin(filename, index) {
+            document.getElementById('skin_mode').value = 'fixed';
+            document.getElementById('skinIndexInput').value = index;
+            document.querySelectorAll('.skin-preview').forEach(function (img) { img.classList.remove('selected'); });
+            var t = document.querySelector('.skin-item[data-filename="' + filename + '"] .skin-preview');
+            if (t) t.classList.add('selected');
+        }
 
-        autoDetectBtn.addEventListener('click', function () {
-            autoDetectBtn.disabled = true;
-            autoDetectBtn.textContent = '识别中...';
-            detectStatus.textContent = '正在截图并识别，请稍候...';
-            detectStatus.style.color = '#888';
-
-            fetch('/detect_positions', { method: 'POST' })
-                .then(response => response.json())
-                .then(data => {
-                    autoDetectBtn.disabled = false;
-                    autoDetectBtn.textContent = '🔍 自动识别位置';
-
-                    if (data.error) {
-                        detectStatus.textContent = '✗ ' + data.error;
-                        detectStatus.style.color = '#e53935';
-                        return;
-                    }
-
-                    if (data.p1) p1Field.value = data.p1.join(',');
-                    if (data.p2) p2Field.value = data.p2.join(',');
-
-                    const parts = [];
-                    if (data.p1) parts.push('P1=[' + data.p1.join(',') + ']');
-                    if (data.p2) parts.push('P2=[' + data.p2.join(',') + ']');
-                    detectStatus.textContent = '✓ 已识别: ' + parts.join('  ');
-                    detectStatus.style.color = '#43a047';
-
-                    mdui.snackbar({
-                        message: '坐标已填入，请核对后点击「保存位置设置」',
-                        placement: 'top',
-                        duration: 4000,
-                    });
-                })
-                .catch(error => {
-                    autoDetectBtn.disabled = false;
-                    autoDetectBtn.textContent = '🔍 自动识别位置';
-                    detectStatus.textContent = '✗ 网络错误: ' + error.message;
-                    detectStatus.style.color = '#e53935';
-                    console.error('detect_positions error:', error);
-                });
-        });
-
-        // ================================================================
-        // 登出
-        // ================================================================
+        // ================= 登出 =================
         document.getElementById('logoutBtn').addEventListener('click', function () {
-            fetch('/logout', { method: 'POST' })
-                .then(() => { window.location.href = '/login'; });
+            fetch('/logout', { method: 'POST' }).finally(function () { location.href = '/login'; });
         });
 
-        // ================================================================
-        // 检查更新
-        // ================================================================
+        // ================= 更新 =================
+        function updateStatusHtml(html) {
+            var el = document.getElementById('updateStatus');
+            el.innerHTML = html;
+            el.classList.remove('hidden');
+        }
         document.getElementById('checkUpdateBtn').addEventListener('click', function () {
-            const btn = this;
-            const statusDiv = document.getElementById('updateStatus');
-            btn.disabled = true;
-            btn.textContent = '检查中...';
-            statusDiv.style.display = 'none';
-
+            var btn = this;
+            btn.disabled = true; btn.textContent = '检查中...';
             fetch('/check_update', { method: 'POST' })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.error) {
-                        statusDiv.innerHTML = `<mdui-alert variant="error">${data.message}</mdui-alert>`;
-                    } else if (data.has_update) {
-                        statusDiv.innerHTML = `
-                        <mdui-alert variant="info">
-                            <div>发现新版本: ${data.version}</div>
-                            <div>更新名称: ${data.name}</div>
-                            <div>发布时间: ${data.published_at}</div>
-                            <div>更新内容: ${data.body || '无'}</div>
-                        </mdui-alert>`;
-                    } else {
-                        statusDiv.innerHTML = `<mdui-alert variant="success">${data.message}</mdui-alert>`;
-                    }
-                    statusDiv.style.display = 'block';
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    if (data.error) updateStatusHtml('✗ ' + data.message);
+                    else if (data.has_update) updateStatusHtml('发现新版本: ' + data.version);
+                    else updateStatusHtml(data.message || '已是最新');
                 })
-                .catch(error => {
-                    statusDiv.innerHTML = `<mdui-alert variant="error">网络错误: ${error.message}</mdui-alert>`;
-                    statusDiv.style.display = 'block';
-                })
-                .finally(() => {
-                    btn.disabled = false;
-                    btn.textContent = '检查更新';
-                });
+                .catch(function () { updateStatusHtml('网络错误'); })
+                .finally(function () { btn.disabled = false; btn.textContent = '检查更新'; });
         });
-
-        // ================================================================
-        // 手动更新
-        // ================================================================
         document.getElementById('manualUpdateBtn').addEventListener('click', function () {
-            const btn = this;
-            const statusDiv = document.getElementById('updateStatus');
-
             if (!confirm('确定要进行手动更新吗？更新过程中程序可能会重启。')) return;
-
-            btn.disabled = true;
-            btn.textContent = '更新中...';
-            statusDiv.style.display = 'none';
-
+            var btn = this;
+            btn.disabled = true; btn.textContent = '更新中...';
             fetch('/manual_update', { method: 'POST' })
-                .then(response => {
-                    if (response.status === 200) {
-                        statusDiv.innerHTML = '<mdui-alert variant="success">更新成功！程序将自动重启。</mdui-alert>';
-                        setTimeout(() => { window.location.reload(); }, 3000);
-                    } else if (response.status === 204) {
-                        statusDiv.innerHTML = '<mdui-alert variant="info">当前已是最新版本，无需更新。</mdui-alert>';
-                    } else if (response.status === 500) {
-                        return response.json().then(data => {
-                            throw new Error(data.message || '更新失败');
-                        });
-                    }
+                .then(function (r) {
+                    if (r.status === 200) { updateStatusHtml('更新成功！程序将自动重启'); setTimeout(function () { location.reload(); }, 3000); }
+                    else if (r.status === 204) { updateStatusHtml('当前已是最新版本'); }
+                    else { return r.json().then(function (d) { throw new Error(d.message || '更新失败'); }); }
                 })
-                .catch(error => {
-                    statusDiv.innerHTML = `<mdui-alert variant="error">更新失败: ${error.message}</mdui-alert>`;
-                    statusDiv.style.display = 'block';
-                })
-                .finally(() => {
-                    btn.disabled = false;
-                    btn.textContent = '手动更新';
-                });
+                .catch(function (err) { updateStatusHtml('更新失败: ' + err.message); })
+                .finally(function () { btn.disabled = false; btn.textContent = '手动更新'; });
         });
     </script>
 </body>
-
 </html>

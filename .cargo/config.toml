@@ -1,0 +1,6 @@
+# Cargo 配置（原先误放在 Cargo.toml 的键迁移至此）
+# 注：resolver.feature-unification 需要 nightly -Zfeature-unification，stable 下无效，已移除
+
+[target.'cfg(target_os = "linux")']
+# mold / wild 链接器（GCC 12+ 时可用）
+rustflags = ["-C", "link-arg=-fuse-ld=wild"]

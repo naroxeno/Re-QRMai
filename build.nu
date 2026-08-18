@@ -132,9 +132,10 @@ def pack-release [profile: string = "debug"] {
     cp $"($dist_dir)/extension-chrome.zip" $pkg_dir
     cp $"($dist_dir)/extension-firefox.zip" $pkg_dir
 
-    if ("config.json" | path exists) { cp "config.json" $pkg_dir }
+    if ("config.toml" | path exists) { cp "config.toml" $pkg_dir }
     if ("README.md" | path exists)   { cp "README.md" $pkg_dir }
     if ("img" | path exists)         { cp -r "img" $"($pkg_dir)/img" }
+    if ("static" | path exists)      { cp -r "static" $"($pkg_dir)/static" }
 
     cd $dist_dir
     tar czf $"($pkg_name).tar.gz" $pkg_name

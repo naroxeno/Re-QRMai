@@ -4,11 +4,11 @@
 
 use anyhow::{Context, Result};
 use image::ImageBuffer;
-use log::{error, info};
+use log::{error, info, warn};
 use std::path::Path;
 use template_matching::{find_extremes, match_template, Image as TmImage, MatchTemplateMethod};
 
-/// 模板匹配结果
+/// 模板匹配结果（x/y 为匹配框中心点）
 #[derive(Debug, Clone)]
 pub struct MatchResult {
     pub x: u32,
@@ -24,22 +24,60 @@ fn load_template(path: &Path) -> Result<ImageBuffer<image::Luma<f32>, Vec<f32>>>
     Ok(img.to_luma32f())
 }
 
-/// 多尺度模板匹配
+/// 3×3 Sobel 梯度幅值图：纯色区域 → 0，边缘/纹理 → 大值。
 ///
-/// - `pick_mode`: `"best"` 选最高置信度，`"bottom"` 选 Y 坐标最大（P2 用）
+/// 在梯度图上做 SSD 匹配可消除「大面积纯色背景」的干扰：
+/// 模板与屏幕上任意纯色区域对齐时差的平方和几乎为 0，导致置信度虚高、
+/// 位置错乱（本项目 P2 模板约 90% 是深色背景，正是此前误匹配的根源）。
+fn to_gradient_f32(
+    img: &ImageBuffer<image::Luma<f32>, Vec<f32>>,
+) -> ImageBuffer<image::Luma<f32>, Vec<f32>> {
+    let (w, h) = img.dimensions();
+    let mut out = ImageBuffer::new(w, h);
+    const GX: [f32; 9] = [-1.0, 0.0, 1.0, -2.0, 0.0, 2.0, -1.0, 0.0, 1.0];
+    const GY: [f32; 9] = [-1.0, -2.0, -1.0, 0.0, 0.0, 0.0, 1.0, 2.0, 1.0];
+    for y in 1..h - 1 {
+        for x in 1..w - 1 {
+            let mut sx = 0.0f32;
+            let mut sy = 0.0f32;
+            let mut k = 0usize;
+            for dy in -1i32..=1 {
+                for dx in -1i32..=1 {
+                    let px = (x as i32 + dx) as u32;
+                    let py = (y as i32 + dy) as u32;
+                    let p = img.get_pixel(px, py)[0];
+                    sx += GX[k] * p;
+                    sy += GY[k] * p;
+                    k += 1;
+                }
+            }
+            out.put_pixel(x, y, image::Luma([(sx * sx + sy * sy).sqrt()]));
+        }
+    }
+    out
+}
+
+/// 多尺度模板匹配（在 Sobel 梯度图上进行）
+///
+/// 收集所有「置信度 ≥ 阈值」的候选（每个尺度 1 个全局最优），
+/// 由调用方结合语义/位置约束做最终选择。
+///
+/// - `label`: 仅用于日志标注（如 "p1" / "p2"）
 /// - `threshold`: 归一化置信度阈值（0–1）
 pub fn match_template_multiscale(
     screen: &ImageBuffer<image::Luma<f32>, Vec<f32>>,
     template_path: &Path,
     threshold: f32,
     scales: &[f32],
-    pick_mode: &str,
-) -> Result<Option<MatchResult>> {
-    let template = load_template(template_path)?;
+    label: &str,
+) -> Result<Vec<MatchResult>> {
+    // 屏幕与模板统一转梯度图：只保留边缘/纹理，纯色背景不再干扰 SSD
+    let screen = to_gradient_f32(screen);
+    let template_img = load_template(template_path)?;
+    let template = to_gradient_f32(&template_img);
     let (tw_orig, th_orig) = (template.width(), template.height());
-    let template_area = (tw_orig * th_orig) as f32;
 
-    let mut best: Option<(u32, u32, f32)> = None; // (cx, cy, confidence)
+    let mut cands: Vec<MatchResult> = Vec::new();
 
     for &scale in scales {
         let tw = (tw_orig as f32 * scale) as u32;
@@ -56,6 +94,10 @@ pub fn match_template_multiscale(
             image::imageops::FilterType::Lanczos3,
         );
 
+        // 有效（有内容）像素数：只统计梯度幅值较大的像素，
+        // 使置信度只反映「内容对齐程度」，纯色背景不再贡献分母
+        let n_active = scaled.pixels().filter(|p| p[0] > 0.03).count().max(1) as f32;
+
         // GPU 模板匹配 (SSD) — 手动构造 Image 以绕过 image 0.24/0.25 版本差异
         let result = match_template(
             TmImage::new(screen.as_raw(), screen.width(), screen.height()),
@@ -64,34 +106,30 @@ pub fn match_template_multiscale(
         );
         let extremes = find_extremes(&result);
 
-        // SSD: min_value 越小越匹配，归一化为 [0, 1] 置信度
-        let confidence =
-            1.0 - (extremes.min_value / template_area).clamp(0.0, 1.0);
+        // 置信度 = 1 - 平均内容差 / 有效像素数；内容对齐时接近 1
+        let confidence = 1.0 - (extremes.min_value / n_active).clamp(0.0, 1.0);
+
+        info!(
+            "[Detect] {label} scale={scale:.2} 候选 ({}, {}) 置信度={confidence:.3} (有效像素 {n_active:.0})",
+            extremes.min_value_location.0,
+            extremes.min_value_location.1
+        );
 
         if confidence >= threshold {
             let cx = extremes.min_value_location.0 + tw / 2;
             let cy = extremes.min_value_location.1 + th / 2;
-            let better = match &best {
-                Some((_, _, conf)) => {
-                    if pick_mode == "bottom" {
-                        cy > *conf as u32
-                    } else {
-                        confidence > *conf
-                    }
-                }
-                None => true,
-            };
-            if better {
-                best = Some((cx, cy, confidence));
-            }
+            info!(
+                "[Detect] {label} scale={scale:.2} 达标: 中心 ({cx}, {cy}) 置信度={confidence:.3}",
+            );
+            cands.push(MatchResult {
+                x: cx,
+                y: cy,
+                confidence,
+            });
         }
     }
 
-    Ok(best.map(|(x, y, c)| MatchResult {
-        x,
-        y,
-        confidence: c,
-    }))
+    Ok(cands)
 }
 
 /// 加载模板路径，优先用户上传版本
@@ -110,27 +148,119 @@ pub fn get_template_path(img_dir: &Path, name: &str) -> Option<std::path::PathBu
     }
 }
 
+/// 置信度容差：与最佳置信度差距在此范围内的候选视为「并列」，
+/// 并列时结合位置约束（离 P1 更近者优先，呼应「P2 不会太远」）
+const CONF_TOLERANCE: f32 = 0.05;
+
+/// 从候选中选置信度最高者（best 语义）
+fn pick_best(cands: &[MatchResult]) -> Option<MatchResult> {
+    cands
+        .iter()
+        .max_by(|a, b| a.confidence.total_cmp(&b.confidence))
+        .cloned()
+}
+
+/// 候选与 P1 的平方距离（仅用于排序）
+fn dist2_to_p1(c: &MatchResult, p1: [u32; 2]) -> u64 {
+    let dx = (c.x as i64 - p1[0] as i64).unsigned_abs();
+    let dy = (c.y as i64 - p1[1] as i64).unsigned_abs();
+    dx * dx + dy * dy
+}
+
+/// 语义化选择 P2：
+/// 1. 位置约束：候选必须在 P1 左上方（cx < p1.x 且 cy < p1.y）且距离不太远
+///    （max_dx/max_dy 由调用方按屏幕分辨率计算或手动指定）；
+/// 2. 区域内用 best（最高置信度）；与最佳置信度差距 < 容差的并列者中选离 P1 最近的；
+/// 3. 区域内无候选 → 退回全屏 best 并打警告。
+fn pick_p2(
+    cands: &[MatchResult],
+    p1: [u32; 2],
+    max_dx: u32,
+    max_dy: u32,
+) -> Option<MatchResult> {
+    // 1) 位置约束过滤
+    let in_region: Vec<&MatchResult> = cands
+        .iter()
+        .filter(|c| {
+            c.x < p1[0] && c.y < p1[1] && p1[0] - c.x <= max_dx && p1[1] - c.y <= max_dy
+        })
+        .collect();
+
+    if !in_region.is_empty() {
+        // 2) 区域内 best + 置信度容差（并列者选离 P1 最近）
+        let best_conf = in_region
+            .iter()
+            .map(|c| c.confidence)
+            .fold(0.0f32, f32::max);
+        let tied = in_region
+            .iter()
+            .filter(|c| best_conf - c.confidence < CONF_TOLERANCE)
+            .count();
+        let chosen = in_region
+            .iter()
+            .filter(|c| best_conf - c.confidence < CONF_TOLERANCE)
+            .min_by_key(|c| dist2_to_p1(c, p1))
+            .map(|c| (*c).clone());
+        if let Some(c) = &chosen {
+            info!(
+                "[Detect] P2 区域候选 {} 个(并列 {tied}), 选中中心 ({}, {}) 置信度={:.3}",
+                in_region.len(),
+                c.x,
+                c.y,
+                c.confidence
+            );
+        }
+        return chosen;
+    }
+
+    // 3) 兜底：全屏 best + 警告
+    if let Some(c) = pick_best(cands) {
+        warn!(
+            "[Detect] P2 未在 P1 左上方区域 ({max_dx}x{max_dy}) 内找到候选 (P1=({},{}))，退回全屏最佳 ({}, {}) 置信度={:.3}，请检查模板",
+            p1[0], p1[1], c.x, c.y, c.confidence
+        );
+        return Some(c);
+    }
+    None
+}
+
+/// P1/P2 识别结果（None 表示未识别到）
+pub type DetectResult = Result<(Option<[u32; 2]>, Option<[u32; 2]>)>;
+
 /// 从屏幕截图中识别 P1 / P2 坐标
+///
+/// - P1：全屏 best（最高置信度）
+/// - P2：语义化选择——在 P1 左上方且距离不太远的区域内取 best，
+///   置信度并列时选离 P1 更近者；区域内无候选则退回全屏 best 并警告
 pub fn detect_p1p2(
     screen: &ImageBuffer<image::Luma<f32>, Vec<f32>>,
     img_dir: &Path,
     threshold: f32,
-) -> Result<(Option<[u32; 2]>, Option<[u32; 2]>)> {
+    // P2 检测区宽（px），由调用方按屏幕分辨率计算或手动指定
+    p2_max_dx: u32,
+    // P2 检测区高（px）
+    p2_max_dy: u32,
+) -> DetectResult {
     let scales = [0.6, 0.8, 1.0, 1.2, 1.5];
 
-    let p1 = get_template_path(img_dir, "p1")
-        .and_then(|path| {
-            match_template_multiscale(screen, &path, threshold, &scales, "best")
-                .unwrap_or(None)
-        })
-        .map(|m| [m.x, m.y]);
+    let p1_cands = get_template_path(img_dir, "p1")
+        .map(|path| match_template_multiscale(screen, &path, threshold, &scales, "p1"))
+        .transpose()?
+        .unwrap_or_default();
 
-    let p2 = get_template_path(img_dir, "p2")
-        .and_then(|path| {
-            match_template_multiscale(screen, &path, threshold, &scales, "bottom")
-                .unwrap_or(None)
-        })
-        .map(|m| [m.x, m.y]);
+    let p2_cands = get_template_path(img_dir, "p2")
+        .map(|path| match_template_multiscale(screen, &path, threshold, &scales, "p2"))
+        .transpose()?
+        .unwrap_or_default();
+
+    let p1 = pick_best(&p1_cands).map(|m| [m.x, m.y]);
+
+    // P2 优先在 P1 左上方区域内语义化选择；P1 未识别到则无锚点，退回全屏 best
+    let p2 = if let Some(p1) = p1 {
+        pick_p2(&p2_cands, p1, p2_max_dx, p2_max_dy).map(|m| [m.x, m.y])
+    } else {
+        pick_best(&p2_cands).map(|m| [m.x, m.y])
+    };
 
     Ok((p1, p2))
 }
@@ -300,4 +430,108 @@ pub fn capture_screen() -> Result<ImageBuffer<image::Luma<f32>, Vec<f32>>> {
 
     // BGRA → 灰度（blue/red 通道交换不影响灰度转换结果）
     rgba_to_luma32f(bgra, width, height)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::Luma;
+
+    /// 构造 u8 灰度图案：边缘留边框（bg），内部填充 fg
+    fn make_pattern(w: u32, h: u32, bg: u8, fg: u8) -> ImageBuffer<Luma<u8>, Vec<u8>> {
+        ImageBuffer::from_fn(w, h, |x, y| {
+            let v = if x >= 5 && x < w - 5 && y >= 5 && y < h - 5 {
+                fg
+            } else {
+                bg
+            };
+            Luma([v])
+        })
+    }
+
+    /// 合成图像：模板以已知位置粘贴进屏幕，多尺度匹配应找到正确中心
+    #[test]
+    fn match_finds_template_at_known_position() {
+        let (tw, th) = (30u32, 20u32);
+        let (sw, sh) = (200u32, 150u32);
+        let tpl_u8 = make_pattern(tw, th, 128, 255);
+        let tpl_path = std::env::temp_dir().join("qrmai_test_tpl.png");
+        tpl_u8.save(&tpl_path).unwrap();
+
+        // 屏幕：背景与模板灰底一致（避免外圈额外边缘干扰）+ 在 (100, 80) 粘贴模板
+        let bg = 128.0f32 / 255.0; // 模板灰底 128 → 0.502
+        let mut screen = ImageBuffer::from_pixel(sw, sh, Luma([bg]));
+        for y in 0..th {
+            for x in 0..tw {
+                let v = tpl_u8.get_pixel(x, y)[0] as f32 / 255.0;
+                screen.put_pixel(100 + x, 80 + y, Luma([v]));
+            }
+        }
+
+        let cands = match_template_multiscale(&screen, &tpl_path, 0.5, &[1.0], "test")
+            .expect("匹配失败");
+        std::fs::remove_file(&tpl_path).ok();
+        assert_eq!(cands.len(), 1, "应找到 1 个候选");
+        let m = &cands[0];
+        let (ex, ey) = (115i64, 90i64); // 期望中心 (100+15, 80+10)
+        assert!(
+            (m.x as i64 - ex).abs() <= 2 && (m.y as i64 - ey).abs() <= 2,
+            "位置偏差过大: 实际 ({}, {}), 期望 ({ex}, {ey})",
+            m.x,
+            m.y
+        );
+        assert!(m.confidence > 0.9, "置信度应高: {}", m.confidence);
+    }
+
+    fn mr(x: u32, y: u32, confidence: f32) -> MatchResult {
+        MatchResult { x, y, confidence }
+    }
+
+    /// P2 语义：区域内候选优先于区域外更高置信度
+    #[test]
+    fn pick_p2_prefers_region_over_global_best() {
+        let p1 = [300, 300];
+        let cands = vec![
+            mr(280, 260, 0.9),  // P1 左上方区域内
+            mr(500, 500, 0.95), // 区域外（右下）置信度更高
+        ];
+        let chosen = pick_p2(&cands, p1, 200, 200).unwrap();
+        assert_eq!(
+            (chosen.x, chosen.y),
+            (280, 260),
+            "应选区域内候选而非全局最高置信度"
+        );
+    }
+
+    /// P2 语义：置信度并列（差距 < 容差）时选离 P1 更近者
+    #[test]
+    fn pick_p2_ties_prefer_closer_to_p1() {
+        let p1 = [300, 300];
+        let cands = vec![
+            mr(280, 260, 0.91), // 较远（dist2=2000）
+            mr(290, 290, 0.90), // 较近（dist2=200），置信度差距 0.01 < 0.05 → 并列
+        ];
+        let chosen = pick_p2(&cands, p1, 200, 200).unwrap();
+        assert_eq!((chosen.x, chosen.y), (290, 290), "并列时应选离 P1 更近者");
+    }
+
+    /// P2 语义：区域内无候选 → 退回全屏最高置信度
+    #[test]
+    fn pick_p2_falls_back_to_global_best() {
+        let p1 = [300, 300];
+        let cands = vec![
+            mr(500, 500, 0.9),
+            mr(510, 510, 0.95),
+        ];
+        let chosen = pick_p2(&cands, p1, 100, 100).unwrap(); // 区域 100x100，无候选
+        assert_eq!((chosen.x, chosen.y), (510, 510), "应退回全屏最高置信度");
+    }
+
+    /// best 语义：返回最高置信度
+    #[test]
+    fn pick_best_returns_highest_confidence() {
+        let cands = vec![mr(10, 10, 0.6), mr(20, 20, 0.9), mr(30, 30, 0.8)];
+        let best = pick_best(&cands).unwrap();
+        assert_eq!((best.x, best.y), (20, 20));
+    }
 }

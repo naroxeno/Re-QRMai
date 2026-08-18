@@ -1,105 +1,68 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>QRMai 登录</title>
-    <link rel="stylesheet" href="https://unpkg.com/mdui@2/mdui.css" />
-    <script src="https://unpkg.com/mdui@2/mdui.global.js"></script>
-    <style>
-        body {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-        }
-        
-        .login-card {
-            width: 100%;
-            max-width: 400px;
-            padding: 24px;
-        }
-        
-        .logo {
-            text-align: center;
-            margin-bottom: 24px;
-        }
-        
-        .logo h1 {
-            margin: 0;
-            font-size: 24px;
-            color: #333;
-        }
-        
-        .form-group {
-            margin-bottom: 16px;
-        }
-        
-        .error-message {
-            color: #f44336;
-            font-size: 14px;
-            margin-top: 8px;
-            display: none;
-        }
-    </style>
+    <link rel="icon" type="image/png" href="/static/icon.png">
+    <link rel="stylesheet" href="/static/tailwind.css">
+    <script>
+        (function () {
+            var t = localStorage.getItem('theme');
+            if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+                document.documentElement.classList.add('dark');
+            }
+        })();
+    </script>
 </head>
+<body class="bg-nord-snow-2 dark:bg-nord-polar-0 min-h-screen flex items-center justify-center px-4 text-nord-polar-1 dark:text-nord-snow-0">
 
-<body>
-    <mdui-card class="login-card">
-        <div class="logo">
-            <h1>QRMai 管理面板</h1>
+    <div class="w-full max-w-sm">
+        <div class="bg-white dark:bg-nord-polar-1 rounded-xl shadow-lg border border-nord-snow-0 dark:border-nord-polar-2 p-8">
+            <div class="text-center mb-6">
+                <img src="/static/icon.png" alt="QRMai" class="w-16 h-16 mx-auto mb-2">
+                <h1 class="text-xl font-semibold">QRMai 管理面板</h1>
+                <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mt-1">请输入访问令牌</p>
+            </div>
+
+            <form id="loginForm">
+                <div class="mb-4">
+                    <label class="block text-sm font-medium mb-1" for="tokenInput">访问令牌</label>
+                    <input id="tokenInput" type="password" required placeholder="请输入访问令牌"
+                        class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                </div>
+                <div id="errorMessage" class="hidden mb-3 text-sm text-nord-aurora-red dark:text-nord-aurora-red">
+                    令牌无效，请重新输入
+                </div>
+                <button type="submit"
+                    class="w-full py-2.5 rounded-lg bg-nord-frost-3 hover:bg-nord-frost-2 text-white text-sm font-medium shadow">
+                    登录
+                </button>
+            </form>
+
+            <p class="text-center text-xs text-nord-polar-3 dark:text-nord-snow-1 mt-4">默认令牌：qrmai（可在 config.toml 中修改）</p>
         </div>
-        
-        <form id="loginForm">
-            <div class="form-group">
-                <mdui-text-field id="tokenInput" label="访问令牌" type="password" helper="请输入您的访问令牌" required></mdui-text-field>
-            </div>
-            
-            <div id="errorMessage" class="error-message">
-                令牌无效，请重新输入
-            </div>
-            
-            <mdui-button type="submit" variant="filled" style="width: 100%;">登录</mdui-button>
-
-            <div>
-                默认令牌：qrmai
-            </div>
-        </form>
-    </mdui-card>
+    </div>
 
     <script>
-        document.getElementById('loginForm').addEventListener('submit', function(e) {
+        document.getElementById('loginForm').addEventListener('submit', function (e) {
             e.preventDefault();
-            
-            const token = document.getElementById('tokenInput').value;
-            const errorMessage = document.getElementById('errorMessage');
-            
-            // 发送请求验证token
+            var token = document.getElementById('tokenInput').value;
+            var err = document.getElementById('errorMessage');
+            err.classList.add('hidden');
+
             fetch('/login', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                },
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: 'token=' + encodeURIComponent(token)
             })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    // 登录成功，跳转到设置页面
-                    window.location.href = '/settings';
-                } else {
-                    // 显示错误消息
-                    errorMessage.style.display = 'block';
-                }
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (data.success) { window.location.href = '/settings'; }
+                else { err.classList.remove('hidden'); }
             })
-            .catch(error => {
-                console.error('Error:', error);
-                errorMessage.style.display = 'block';
-            });
+            .catch(function () { err.classList.remove('hidden'); });
         });
     </script>
 </body>
-
 </html>

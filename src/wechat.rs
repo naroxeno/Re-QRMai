@@ -4,22 +4,30 @@
 //!
 //! 支持崩溃恢复：程序退出时可选择保留劫持环境，下次启动自动恢复，
 //! 无需重新创建 FIFO / 伪装脚本 / 重启微信。
+//!
+//! 子模块划分（Rust 2018 模块布局）：
+//! - `fifo`：伪装 xdg-open 与 FIFO 监听线程
+//! - `process`：微信进程启动与探活
+//! - `qr_fetch`：URL 抓取与二维码解码（纯函数已单测）
+
+mod fifo;
+mod process;
+mod qr_fetch;
 
 use crate::mouse::MouseController;
 use anyhow::{Context, Result};
 use log::{error, info};
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::{BufRead, BufReader};
-#[cfg(unix)]
-#[cfg(unix)] use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+
+// 对外 re-export（main.rs 使用，保持原 wechat:: 路径不变）
+pub use qr_fetch::fetch_and_decode;
 
 // ── 状态持久化 ──────────────────────────────────────────
 
@@ -33,187 +41,6 @@ struct HijackState {
     fake_bin_dir: String,
 }
 
-#[cfg(unix)]
-fn pid_is_alive(pid: u32) -> bool {
-    unsafe { libc::kill(pid as i32, 0) == 0 }
-}
-#[cfg(not(unix))]
-fn pid_is_alive(_pid: u32) -> bool {
-    false
-}
-
-// ── 伪装的 xdg-open ──────────────────────────────────────
-
-fn create_fake_xdg_open(fake_bin_dir: &Path, fifo_path: &Path) -> Result<()> {
-    fs::create_dir_all(fake_bin_dir)
-        .with_context(|| format!("创建伪装目录失败: {fake_bin_dir:?}"))?;
-
-    let xdg_open = fake_bin_dir.join("xdg-open");
-    let script = format!(
-        r#"#!/bin/bash
-URL="$1"
-if [[ "$URL" =~ ^https?://wq\.wahlap\.net/qrcode/req/MAID[0-9A-Fa-f]+\.html ]]; then
-    echo "$URL" > "{}"
-    exit 0
-else
-    unset BROWSER
-    exec /usr/bin/xdg-open "$@"
-fi
-"#,
-        fifo_path.display()
-    );
-
-    fs::write(&xdg_open, script)
-        .with_context(|| format!("写入伪装 xdg-open 失败: {xdg_open:?}"))?;
-
-    #[allow(unused_mut)]
-    let mut perms = fs::metadata(&xdg_open)
-        .with_context(|| format!("读取权限失败: {xdg_open:?}"))?
-        .permissions();
-    #[cfg(unix)] { perms.set_mode(0o755); }
-    fs::set_permissions(&xdg_open, perms)
-        .with_context(|| format!("设置可执行权限失败: {xdg_open:?}"))?;
-
-    info!("[Wechat] 已创建伪装的 xdg-open: {xdg_open:?}");
-    Ok(())
-}
-
-// ── FIFO 监听 ───────────────────────────────────────────
-
-fn spawn_fifo_listener(
-    fifo_path: PathBuf,
-    stop_flag: Arc<AtomicBool>,
-) -> mpsc::Receiver<String> {
-    let (tx, rx) = mpsc::channel();
-
-    thread::spawn(move || {
-        info!("[Wechat] FIFO 监听线程已启动");
-        while !stop_flag.load(Ordering::Relaxed) && fifo_path.exists() {
-            let file = match fs::File::open(&fifo_path) {
-                Ok(f) => f,
-                Err(_) => {
-                    thread::sleep(Duration::from_millis(200));
-                    continue;
-                }
-            };
-            for line in BufReader::new(file).lines() {
-                if stop_flag.load(Ordering::Relaxed) {
-                    break;
-                }
-                if let Ok(url) = line {
-                    let url = url.trim().to_string();
-                    if !url.is_empty() {
-                        info!("[Wechat] 截获链接: {url}");
-                        let _ = tx.send(url);
-                    }
-                }
-            }
-            thread::sleep(Duration::from_millis(200));
-        }
-        info!("[Wechat] FIFO 监听线程已退出");
-    });
-
-    rx
-}
-
-// ── 微信进程启动 ────────────────────────────────────────
-
-fn launch_wechat(wechat_bin: &str, fake_bin_dir: &Path) -> Result<Child> {
-    let path = format!(
-        "{}:{}",
-        fake_bin_dir.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
-    info!("[Wechat] 启动微信: dbus-run-session {wechat_bin}");
-
-    Command::new("dbus-run-session")
-        .arg(wechat_bin)
-        .env("PATH", &path)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .with_context(|| format!("启动微信失败: {wechat_bin}"))
-}
-
-// ── QR 解码（zedbar 纯 Rust）─────────────────────────────
-
-/// 使用 zedbar 解码 PNG 图片中的二维码
-pub fn decode_qr_from_bytes(data: &[u8]) -> Result<String> {
-    let gray = image::load_from_memory(data)
-        .context("无法解析图片")?
-        .into_luma8();
-    let (width, height) = gray.dimensions();
-
-    let mut img = zedbar::Image::from_gray(gray.as_raw(), width, height)
-        .context("无法创建 zedbar 图像")?;
-    let mut scanner = zedbar::Scanner::new();
-    let symbols = scanner.scan(&mut img);
-
-    for symbol in symbols {
-        if let Some(data) = symbol.data_string() {
-            let qr_data = data.trim().to_string();
-            if !qr_data.is_empty() {
-                info!("[Wechat] 二维码解码成功: {}...", &qr_data[..qr_data.len().min(50)]);
-                return Ok(qr_data);
-            }
-        }
-    }
-
-    anyhow::bail!("zedbar 未识别到二维码")
-}
-
-// ── URL 获取与二维码解码 ─────────────────────────────────
-
-pub fn fetch_and_decode(url: &str) -> Result<String> {
-    let ua = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 \
-              (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
-
-    info!("[Wechat] 请求页面: {}...", &url[..url.len().min(80)]);
-
-    // 1. 请求微信打开的 HTML 页面
-    let html = ureq::get(url)
-        .header("User-Agent", ua)
-        .call()
-        .context("无法访问微信链接")?
-        .into_body()
-        .read_to_string()
-        .context("读取 HTML 失败")?;
-
-    // 2. 正则提取 MAID 图片 src
-    let re = Regex::new(r#"<img\s+[^>]*src="([^"]*MAID[^"]*\.png[^"]*)""#).unwrap();
-    let img_src = match re.captures(&html) {
-        Some(cap) => cap[1].to_string(),
-        None => {
-            let fallback = Regex::new(r#"<img\s+[^>]*src="([^"]+)""#).unwrap();
-            fallback
-                .captures(&html)
-                .map(|c| c[1].to_string())
-                .context("HTML 中未找到二维码图片链接")?
-        }
-    };
-
-    // URL join
-    let img_url = if img_src.starts_with("http") {
-        img_src
-    } else {
-        let base = url.rsplit_once('/').map(|(b, _)| b).unwrap_or(url);
-        format!("{base}/{img_src}")
-    };
-    info!("[Wechat] 二维码图片: {}...", &img_url[..img_url.len().min(80)]);
-
-    // 3. 下载二维码图片
-    let img_data = ureq::get(&img_url)
-        .header("User-Agent", ua)
-        .call()
-        .context("下载二维码图片失败")?
-        .into_body()
-        .read_to_vec()
-        .context("读取图片数据失败")?;
-
-    // 4. zbarimg 解码
-    decode_qr_from_bytes(&img_data)
-}
-
 // ── WechatHijack ────────────────────────────────────────
 
 /// Linux 微信劫持环境管理器
@@ -221,7 +48,7 @@ pub struct WechatHijack {
     temp_dir: PathBuf,
     fake_bin_dir: PathBuf,
     fifo_path: PathBuf,
-    wechat_proc: Option<Child>,
+    wechat_proc: Option<std::process::Child>,
     wechat_pid: Option<u32>,
     stop_flag: Arc<AtomicBool>,
     url_rx: Mutex<mpsc::Receiver<String>>,
@@ -261,10 +88,10 @@ impl WechatHijack {
         }
         info!("[Wechat] 已创建 FIFO: {fifo_path:?}");
 
-        create_fake_xdg_open(&fake_bin_dir, &fifo_path)?;
+        fifo::create_fake_xdg_open(&fake_bin_dir, &fifo_path)?;
 
         let stop_flag = Arc::new(AtomicBool::new(false));
-        let url_rx = Mutex::new(spawn_fifo_listener(fifo_path.clone(), stop_flag.clone()));
+        let url_rx = Mutex::new(fifo::spawn_fifo_listener(fifo_path.clone(), stop_flag.clone()));
 
         Ok(Self {
             temp_dir,
@@ -290,7 +117,7 @@ impl WechatHijack {
         let state: HijackState = serde_json::from_str(&json).ok()?;
 
         // 检查微信进程是否仍在运行
-        if !pid_is_alive(state.wechat_pid) {
+        if !process::pid_is_alive(state.wechat_pid) {
             info!("[Wechat] 上次的微信进程 (PID {}) 已退出，将创建新环境", state.wechat_pid);
             let _ = fs::remove_file(state_path);
             return None;
@@ -311,7 +138,7 @@ impl WechatHijack {
 
         // 恢复成功：复用已有环境
         let stop_flag = Arc::new(AtomicBool::new(false));
-        let url_rx = Mutex::new(spawn_fifo_listener(fifo_path.clone(), stop_flag.clone()));
+        let url_rx = Mutex::new(fifo::spawn_fifo_listener(fifo_path.clone(), stop_flag.clone()));
 
         info!("[Wechat] ♻ 已恢复劫持环境:");
         info!("         微信 PID: {}", state.wechat_pid);
@@ -367,7 +194,7 @@ impl WechatHijack {
             return Ok(());
         }
 
-        let child = launch_wechat(&self.wechat_bin, &self.fake_bin_dir)?;
+        let child = process::launch_wechat(&self.wechat_bin, &self.fake_bin_dir)?;
         self.wechat_pid = Some(child.id());
         self.wechat_proc = Some(child);
         thread::sleep(Duration::from_secs(3));
@@ -379,7 +206,7 @@ impl WechatHijack {
     pub fn is_wechat_alive(&mut self) -> bool {
         // 优先通过 PID 检查
         if let Some(pid) = self.wechat_pid {
-            if !pid_is_alive(pid) {
+            if !process::pid_is_alive(pid) {
                 self.wechat_proc = None;
                 return false;
             }
@@ -526,12 +353,12 @@ impl WechatHijack {
             }
             // 等待进程退出
             for _ in 0..30 {
-                if !pid_is_alive(pid) {
+                if !process::pid_is_alive(pid) {
                     break;
                 }
                 thread::sleep(Duration::from_millis(200));
             }
-            if pid_is_alive(pid) {
+            if process::pid_is_alive(pid) {
                 #[cfg(unix)]
                 unsafe {
                     libc::kill(pid as i32, libc::SIGKILL);
