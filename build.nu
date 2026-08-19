@@ -136,7 +136,7 @@ def pack-release [profile: string = "debug"] {
     if ("README.md" | path exists)   { cp "README.md" $pkg_dir }
     if ("LICENSE" | path exists)     { cp "LICENSE" $pkg_dir }
     if ("img" | path exists)         { cp -r "img" $"($pkg_dir)/img" }
-    if ("static" | path exists)      { cp -r "static" $"($pkg_dir)/static" }
+    # static/ 已编译进二进制（rust-embed），无需随发布包分发
 
     cd $dist_dir
     tar czf $"($pkg_name).tar.gz" $pkg_name

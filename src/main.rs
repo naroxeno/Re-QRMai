@@ -18,8 +18,10 @@ use std::fs;
 use std::io::{Cursor, Write};
 use std::net::IpAddr;
 use std::path::Path;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
+use rust_embed::Embed;
 
 #[macro_use]
 extern crate rocket;
@@ -37,45 +39,36 @@ struct LoginForm {
     token: String,
 }
 
-/// 确保 img/ 目录存在，并写入默认模板图片（嵌入在二进制中）。
-/// 失败仅告警降级（模板缺失时自动识别不可用，但服务仍可启动），不 panic。
+/// 确保 img/ 目录存在，并写入默认模板图片（嵌入在二进制中）
 fn ensure_img_dir() {
     let img_dir = Path::new("img");
     if !img_dir.exists() {
-        match fs::create_dir_all(img_dir) {
-            Ok(_) => info!("[Init] 已创建 img/ 目录"),
-            Err(e) => {
-                error!("[Init] 无法创建 img/ 目录: {e}，模板图片功能将不可用");
-                return;
-            }
-        }
+        fs::create_dir_all(img_dir).expect("无法创建 img/ 目录");
+        info!("[Init] 已创建 img/ 目录");
     }
 
     // 写入默认 P1 模板（如果不存在）
     let p1_path = img_dir.join("p1.png");
     if !p1_path.exists() {
-        match fs::write(&p1_path, include_bytes!("../img/p1.png")) {
-            Ok(_) => info!("[Init] 已创建默认模板: {p1_path:?}"),
-            Err(e) => error!("[Init] 写入默认 p1.png 模板失败: {e}"),
-        }
+        fs::write(&p1_path, include_bytes!("../img/p1.png"))
+            .expect("无法写入默认 p1.png 模板");
+        info!("[Init] 已创建默认模板: {p1_path:?}");
     }
 
     // 写入默认 P2 模板（如果不存在）
     let p2_path = img_dir.join("p2.png");
     if !p2_path.exists() {
-        match fs::write(&p2_path, include_bytes!("../img/p2.png")) {
-            Ok(_) => info!("[Init] 已创建默认模板: {p2_path:?}"),
-            Err(e) => error!("[Init] 写入默认 p2.png 模板失败: {e}"),
-        }
+        fs::write(&p2_path, include_bytes!("../img/p2.png"))
+            .expect("无法写入默认 p2.png 模板");
+        info!("[Init] 已创建默认模板: {p2_path:?}");
     }
 
     // 写入 README（如果不存在）
     let readme_path = img_dir.join("README.txt");
     if !readme_path.exists() {
-        match fs::write(&readme_path, include_str!("../img/README.txt")) {
-            Ok(_) => info!("[Init] 已创建 img/README.txt"),
-            Err(e) => error!("[Init] 写入 img/README.txt 失败: {e}"),
-        }
+        fs::write(&readme_path, include_str!("../img/README.txt"))
+            .expect("无法写入 img/README.txt");
+        info!("[Init] 已创建 img/README.txt");
     }
 }
 
@@ -98,6 +91,42 @@ fn index() -> RawHtml<&'static str> {
 #[get("/login")]
 fn login_page() -> RawHtml<&'static str> {
     RawHtml(include_str!("../templates/login.html"))
+}
+
+/// 静态资源
+#[derive(Embed)]
+#[folder = "static/"]
+struct Asset;
+#[rocket::get("/static/<file..>")]
+async fn static_files(
+    file: PathBuf,
+) -> Result<(ContentType, Vec<u8>), rocket::http::Status> {
+    let path = file.to_string_lossy();
+
+    // 从嵌入式资源（编译期 rust-embed 打包的 static/ 目录）获取文件
+    match Asset::get(&path) {
+        Some(content) => {
+            // 推断 Content-Type（注意 .woff 与 .woff2 均为字体）
+            let content_type = if path.ends_with(".css") {
+                ContentType::CSS
+            } else if path.ends_with(".js") {
+                ContentType::JavaScript
+            } else if path.ends_with(".png") {
+                ContentType::PNG
+            } else if path.ends_with(".svg") {
+                ContentType::SVG
+            } else if path.ends_with(".woff2") {
+                ContentType::new("font", "woff2")
+            } else if path.ends_with(".woff") {
+                ContentType::new("font", "woff")
+            } else {
+                ContentType::Plain
+            };
+
+            Ok((content_type, content.data.to_vec()))
+        }
+        None => Err(rocket::http::Status::NotFound),
+    }
 }
 
 /// 设置页 — 需要令牌鉴权，模板由 minijinja 渲染（Environment 启动时预编译并注入）
@@ -174,7 +203,13 @@ async fn qrmai_handler(
                 hijack.click_p1p2(&mut mouse, p1, p2)
             } else {
                 // 非 Linux 平台：直接模拟点击，无需微信劫持
-                crate::wechat::WechatHijack::click_p1_p2(&mut mouse, p1, p2)
+                info!("[QRMai] 点击 P1 ({p1:?}) 生成二维码");
+                mouse.move_click(p1[0] as i32, p1[1] as i32, 100)?;
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                info!("[QRMai] 点击 P2 ({p2:?})");
+                mouse.move_click(p2[0] as i32, p2[1] as i32, 0)?;
+                mouse.move_click(p2[0] as i32, p2[1] as i32, 0)?;
+                Ok(())
             }
         })
         .await
@@ -184,11 +219,8 @@ async fn qrmai_handler(
             Status::InternalServerError
         })?;
 
-        // 轮询缓存，等待浏览器扩展提交。
-        // 注意：扩展模式完整链路 = 点击 → 微信打开浏览器 → 扩展拦截 → 抓取解码，
-        // 耗时通常大于劫持模式（只需等 FIFO URL），等待窗口需放宽（至少 15s）
-        let wait_timeout = timeout.max(15);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(wait_timeout);
+        // 轮询缓存，等待浏览器扩展提交
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
         loop {
             {
                 let cache = qr_cache.read().await;
@@ -203,7 +235,7 @@ async fn qrmai_handler(
             rocket::tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
 
-        error!("[QRMai] 等待扩展提交链接超时 ({}s)", wait_timeout);
+        error!("[QRMai] 等待扩展提交链接超时 ({}s)", timeout);
         return Err(Status::InternalServerError);
     }
 
@@ -408,6 +440,95 @@ async fn qrmai_url_handler(
     Ok((ContentType::PNG, buf))
 }
 
+// ── 检查更新（GitHub API） ──────────────────────────────
+
+/// GitHub 最新 release 信息（/check_update 用）
+#[derive(Deserialize)]
+struct GithubRelease {
+    tag_name: String,
+    name: String,
+    published_at: String,
+    body: Option<String>,
+}
+
+/// 比较远程 tag 与当前版本：remote > current？
+/// 支持 "v1.2.3" / "1.2.3" 等正式版本号；预发布（含 "-"，如 beta/rc）不视为更新
+fn version_greater(remote: &str, current: &str) -> bool {
+    // 预发布 tag（如 v0.1.0-beta.1）不算比当前正式版新
+    if remote.contains('-') {
+        return false;
+    }
+    fn parts(v: &str) -> Vec<u64> {
+        v.trim_start_matches('v')
+            .split('.')
+            .filter_map(|p| p.parse::<u64>().ok())
+            .collect()
+    }
+    let r = parts(remote);
+    let c = parts(current);
+    for (a, b) in r.iter().zip(c.iter()) {
+        if a != b {
+            return a > b;
+        }
+    }
+    r.len() > c.len()
+}
+
+/// 检查更新：抓取 GitHub 最新 release，与当前版本（编译期 CARGO_PKG_VERSION）比较
+#[post("/check_update")]
+fn check_update() -> Json<serde_json::Value> {
+    const REPO: &str = "SodaCodeSave/QRmai";
+    const CURRENT: &str = env!("CARGO_PKG_VERSION");
+    let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
+
+    match ureq::get(&url)
+        .header("User-Agent", "QRMai-rs")
+        .header("Accept", "application/vnd.github+json")
+        .call()
+    {
+        Ok(resp) => {
+            let text = resp
+                .into_body()
+                .read_to_string()
+                .map_err(|e| format!("读取 GitHub 响应失败: {e}"));
+            match text.and_then(|t| {
+                serde_json::from_str::<GithubRelease>(&t).map_err(|e| format!("解析 GitHub 响应失败: {e}"))
+            }) {
+                Ok(release) => {
+                    let has_update = version_greater(&release.tag_name, CURRENT);
+                    info!("[QRMai] 检查更新: 远程 {} / 当前 v{CURRENT}", release.tag_name);
+                    Json(serde_json::json!({
+                        "has_update": has_update,
+                        "version": release.tag_name,
+                        "name": release.name,
+                        "published_at": release.published_at,
+                        "body": release.body.unwrap_or_default(),
+                        "message": if has_update {
+                            format!("发现新版本: {}", release.tag_name)
+                        } else {
+                            format!("当前已是最新版本 v{CURRENT}")
+                        },
+                    }))
+                }
+                Err(e) => Json(serde_json::json!({
+                    "error": true,
+                    "message": e,
+                })),
+            }
+        }
+        Err(ureq::Error::StatusCode(404)) => {
+            Json(serde_json::json!({
+                "has_update": false,
+                "message": "暂无已发布的版本",
+            }))
+        }
+        Err(e) => Json(serde_json::json!({
+            "error": true,
+            "message": format!("检查更新失败: {e}"),
+        })),
+    }
+}
+
 // ── 数据结构 ──────────────────────────────────────────────
 
 /// 浏览器扩展提交的 JSON 载荷
@@ -484,8 +605,7 @@ fn file_format(
     )
 }
 
-/// 初始化 flexi_logger：彩色终端输出 + 写入 log/ 目录。
-/// 失败时降级为仅终端提示（不 panic，服务仍可启动）。
+/// 初始化 flexi_logger：彩色终端输出 + 写入 log/ 目录
 fn init_logger() {
     let basename = log_basename();
     let file_spec = flexi_logger::FileSpec::default()
@@ -493,19 +613,14 @@ fn init_logger() {
         .basename(&basename)
         .suppress_timestamp();
 
-    let result = flexi_logger::Logger::try_with_env_or_str("info")
-        .map(|logger| {
-            logger
-                .format_for_files(file_format)
-                .format_for_stderr(stderr_format)
-                .log_to_file(file_spec)
-                .duplicate_to_stderr(flexi_logger::Duplicate::All)
-        })
-        .and_then(|logger| logger.start());
-
-    if let Err(e) = result {
-        eprintln!("[QRMai] 日志初始化失败，本次运行可能无日志输出: {e}");
-    }
+    flexi_logger::Logger::try_with_env_or_str("info")
+        .unwrap()
+        .format_for_files(file_format)
+        .format_for_stderr(stderr_format)
+        .log_to_file(file_spec)
+        .duplicate_to_stderr(flexi_logger::Duplicate::All)
+        .start()
+        .unwrap();
 }
 
 // ── 启动入口 ──────────────────────────────────────────
@@ -515,25 +630,10 @@ async fn main() -> Result<(), rocket::Error> {
     // ── 初始化日志系统 ──
     init_logger();
 
-    let config = match load_or_create_config("config.toml") {
-        Ok(c) => c,
-        Err(e) => {
-            error!("[QRMai] 配置加载失败: {e:#}，请检查 config.toml 是否存在且格式正确");
-            std::process::exit(1);
-        }
-    };
-    if let Err(e) = config.validate() {
-        error!("[QRMai] 配置校验失败: {e}，请修正 config.toml 后重启");
-        std::process::exit(1);
-    }
+    let config = load_or_create_config("config.toml").expect("Failed to load or create config");
 
     // ── 确保 img/ 目录及默认模板存在 ──
     ensure_img_dir();
-
-    info!("读取到的配置: {:#?}", config);
-    info!("Token: {}", config.token);
-    info!("Port: {}", config.port);
-
     // 保存 qr_route 和 host/port 用于后续使用（config 将被 move 到 RwLock 中）
     let qr_route = config.qr_route.clone();
     let host = config.host.clone();
@@ -569,15 +669,8 @@ async fn main() -> Result<(), rocket::Error> {
         .add_template("settings", include_str!("../templates/settings.html"))
         .expect("Failed to compile settings template");
 
-    let address = match IpAddr::from_str(&host) {
-        Ok(addr) => addr,
-        Err(e) => {
-            error!("[QRMai] host 配置无效（应为 IP 地址）: {host:?} ({e})");
-            std::process::exit(1);
-        }
-    };
     let rocket_config = rocket::Config {
-        address,
+        address: IpAddr::from_str(&host).expect("Invalid host in config"),
         port,
         ..rocket::Config::debug_default()
     };
@@ -598,14 +691,15 @@ async fn main() -> Result<(), rocket::Error> {
                 logout,
                 save_settings,
                 mouse_position,
-                detect_positions
+                detect_positions,
+                check_update,
+                static_files
             ],
         );
 
     let _rocket = _rocket
         .mount("/img", FileServer::from("img"))
         .mount("/extension", FileServer::from("extension"))
-        .mount("/static", FileServer::from("static"))
         .launch()
         .await?;
 
@@ -638,5 +732,20 @@ mod ui_tests {
             .unwrap()
             .render(context! {})
             .expect("login 渲染失败");
+    }
+
+    /// 版本比较：远程 tag 与当前版本
+    #[test]
+    fn version_compare() {
+        // 远程较新
+        assert!(version_greater("v0.2.0", "0.1.0"));
+        assert!(version_greater("v1.0.0", "v0.9.9"));
+        assert!(version_greater("v0.1.1", "0.1.0"));
+        // 相同 / 较旧 / 预发布
+        assert!(!version_greater("v0.1.0", "0.1.0"));
+        assert!(!version_greater("v0.0.9", "0.1.0"));
+        assert!(!version_greater("v0.1.0-beta.1", "0.1.0"));
+        // 更多段（0.1.0.1 > 0.1.0）
+        assert!(version_greater("v0.1.0.1", "0.1.0"));
     }
 }
