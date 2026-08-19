@@ -1,4 +1,4 @@
-# QRMai-rs
+# Re-QRMai
 
 ![状态](https://img.shields.io/badge/状态-能用但不保证-success)
 ![驯服对象](https://img.shields.io/badge/驯服对象-微信-red)
@@ -6,7 +6,7 @@
 ![原版](https://img.shields.io/badge/原版-Python-3776AB)
 ![依赖](https://img.shields.io/badge/依赖-能跑就行-brightgreen)
 
-夫二维码者，maimai 及中二音游登入之凭也。然华立以微信为取码之径，学子或设备无微信者，每苦其不便。QRMai-rs 者，以 Rust 重构旧器，化繁为简，一键取码，诚为利器。
+夫二维码者，maimai 及中二音游登入之凭也。然华立以微信为取码之径，学子或设备无微信者，每苦其不便。Re-QRMai 者，以 Rust 重构旧器，化繁为简，一键取码，诚为利器。
 
 ---
 
@@ -33,7 +33,7 @@
 解压后，在终端执行：
 
 ```bash
-./QRMai-rs
+./Re-QRMai
 ```
 
 首次运行会自动生成 `config.toml` 配置文件（**含中文说明注释**），并创建 `img/` 目录存放模板图片。**首次启动会随机生成访问令牌**（`qrmaiXXXXXX`，见 `config.toml` 的 `token` 字段）。
@@ -96,7 +96,7 @@
 ```mermaid
 sequenceDiagram
     participant Browser as 浏览器
-    participant Server as QRMai-rs 服务端
+    participant Server as Re-QRMai 服务端
     participant Wechat as 微信客户端
     participant XDG as 伪 xdg-open 脚本
     participant FIFO as FIFO 管道
@@ -117,7 +117,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant Browser as 浏览器
-    participant Server as QRMai-rs 服务端
+    participant Server as Re-QRMai 服务端
     participant Wechat as 微信客户端
     participant Ext as 浏览器扩展
     participant Cache as QrCache (内存)

@@ -56,7 +56,7 @@ bwrap --bind-try SRC DEST      # 同上，读写
 ```
 宿主机                                                   微信沙箱 (bwrap mount ns)
 +--------------------------+       注入的挂载组            +-----------------------------+
-| QRMai-rs 服务             |                             |                             |
+| Re-QRMai 服务             |                             |                             |
 |  +- .fake_bin/           |  --ro-bind-try FAKE_XDG     |  /usr/bin/xdg-open ---> 伪装  |
 |  |   +- bwrap (包装器)    | -------------->             |  /usr/local/bin/xdg-open ->伪装|
 |  |   +- xdg-open (沙箱版) |                             |  /usr/bin/xdg-open.real <- 真实|
@@ -73,7 +73,7 @@ bwrap --bind-try SRC DEST      # 同上，读写
 
 ## 5. 详细设计
 
-### 5.1 产物清单（QRMai-rs 启动时生成，位于临时目录 `$TMP/qrmai_<pid>/`）
+### 5.1 产物清单（Re-QRMai 启动时生成，位于临时目录 `$TMP/qrmai_<pid>/`）
 
 | 文件 | 说明 |
 |---|---|
@@ -102,7 +102,7 @@ bwrap --bind-try SRC DEST      # 同上，读写
 
 ```bash
 #!/bin/bash
-# QRMai-rs 生成的 bwrap 包装器：注入 QR 劫持挂载后转交真实 bwrap
+# Re-QRMai 生成的 bwrap 包装器：注入 QR 劫持挂载后转交真实 bwrap
 REAL_BWRAP="/usr/sbin/bwrap"          # 生成时写死（which bwrap 探测结果，防自递归）
 FAKE_XDG="<TMP>/.fake_bin/xdg-open"
 FIFO="<TMP>/.link_pipe"

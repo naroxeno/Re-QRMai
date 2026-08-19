@@ -148,7 +148,7 @@ fn esc(s: &str) -> String {
 pub fn render_config_toml(c: &Config) -> String {
     format!(
         r#"# ============================================================
-# QRMai-rs 配置文件
+# Re-QRMai 配置文件
 #
 # 本文件为自动生成，注释即说明。可手动编辑后重启服务生效，
 # 也可在 Web 设置页修改（保存时会按本模板重新生成）。

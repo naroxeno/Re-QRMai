@@ -1,15 +1,15 @@
-# QRMai-rs 项目架构文档
+# Re-QRMai 项目架构文档
 
 > 版本：0.1.0 ｜ 更新日期：2026-08-15 ｜ 语言：Rust (edition 2024)
 
-本文档描述 QRMai-rs 的整体架构、核心业务流程、模块划分与关键技术决策，
+本文档描述 Re-QRMai 的整体架构、核心业务流程、模块划分与关键技术决策，
 供开发者快速理解代码结构并参与后续开发。
 
 ---
 
 ## 1. 项目概述
 
-QRMai-rs 是一个用 **Rust** 从零重写的「Re-QRMai」工具（原版为 Node.js 项目），
+Re-QRMai 是一个用 **Rust** 从零重写的「Re-QRMai」工具（原版为 Node.js 项目），
 核心目标是**自动化获取音游 MAI 微信登录二维码**：
 
 1. 用户通过浏览器访问本工具提供的二维码页面（默认 `/qrmai`）；
@@ -33,7 +33,7 @@ QRMai-rs 是一个用 **Rust** 从零重写的「Re-QRMai」工具（原版为 N
 └──────────┬───────────────────────────────────────────────────────┘
            │ HTTP
 ┌──────────▼───────────────────────────────────────────────────────┐
-│                    QRMai-rs 二进制 (Rocket 服务)                  │
+│                    Re-QRMai 二进制 (Rocket 服务)                  │
 │                                                                  │
 │  ┌──────────┐   ┌────────────┐   ┌────────────┐  ┌────────────┐ │
 │  │ main.rs  │──►│ wechat.rs  │──►│ mouse.rs   │  │ detect.rs  │ │
@@ -86,7 +86,7 @@ QRMai-rs 是一个用 **Rust** 从零重写的「Re-QRMai」工具（原版为 N
 ## 4. 目录结构
 
 ```
-QRMai-rs/
+Re-QRMai/
 ├── Cargo.toml               # 依赖与编译配置（release 极致瘦身）
 ├── build.nu                 # Nushell 构建/打包脚本
 ├── config.toml              # 运行时配置（TOML，自动生成带中文说明，启动时加载）
@@ -311,7 +311,7 @@ GET /qrmai
   - `debugging`：继承 dev 但全量调试符号。
 - 打包脚本 `build.nu`（Nushell）：
   - `nu build.nu`（debug）/ `nu build.nu release` / `nu build.nu extension` / `nu build.nu all`；
-  - 产物：`dist/QRMai-rs`（可执行）、`extension-chrome.zip`、
+  - 产物：`dist/Re-QRMai`（可执行）、`extension-chrome.zip`、
     `extension-firefox.zip`、`qrmai-rs-v{version}-{os}-{arch}.tar.gz`（完整发布包）。
 
 ---

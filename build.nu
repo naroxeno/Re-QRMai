@@ -1,5 +1,5 @@
 #!/usr/bin/env nu
-# ── QRMai-rs 编译 & 打包脚本 (Nushell) ──────────────────────
+# ── Re-QRMai 编译 & 打包脚本 (Nushell) ──────────────────────
 #
 # 用法:
 #   nu build.nu              # 开发构建（debug）
@@ -8,7 +8,7 @@
 #   nu build.nu all          # 构建 + 打包所有产物
 #
 # 输出:
-#   dist/QRMai-rs                   # 可执行文件
+#   dist/Re-QRMai                   # 可执行文件
 #   dist/extension-chrome.zip       # Chrome 扩展包
 #   dist/extension-firefox.zip      # Firefox 扩展包
 #   dist/qrmai-rs-{version}.tar.gz  # 完整发布包
@@ -44,7 +44,7 @@ def clean [] {
 # ── 构建 QRMai 本体 ───────────────────────────────────
 
 def build-binary [profile: string = "debug"] {
-    let msg = "编译 QRMai-rs v" + $version + " (" + $profile + ")"
+    let msg = "编译 Re-QRMai v" + $version + " (" + $profile + ")"
     info $msg
 
     if $profile == "release" {
@@ -54,9 +54,9 @@ def build-binary [profile: string = "debug"] {
     }
 
     let bin = if $profile == "release" {
-        "target/release/QRMai-rs"
+        "target/release/Re-QRMai"
     } else {
-        "target/debug/QRMai-rs"
+        "target/debug/Re-QRMai"
     }
 
     if not ($bin | path exists) {
@@ -64,9 +64,9 @@ def build-binary [profile: string = "debug"] {
         exit 1
     }
 
-    cp $bin $"($dist_dir)/QRMai-rs"
-    chmod +x $"($dist_dir)/QRMai-rs"
-    ok $"二进制文件 → ($dist_dir)/QRMai-rs"
+    cp $bin $"($dist_dir)/Re-QRMai"
+    chmod +x $"($dist_dir)/Re-QRMai"
+    ok $"二进制文件 → ($dist_dir)/Re-QRMai"
 }
 
 # ── 打包浏览器扩展 ─────────────────────────────────────
@@ -128,7 +128,7 @@ def pack-release [profile: string = "debug"] {
     let pkg_dir = $"($dist_dir)/($pkg_name)"
     mkdir $pkg_dir
 
-    cp $"($dist_dir)/QRMai-rs" $pkg_dir
+    cp $"($dist_dir)/Re-QRMai" $pkg_dir
     cp $"($dist_dir)/extension-chrome.zip" $pkg_dir
     cp $"($dist_dir)/extension-firefox.zip" $pkg_dir
 

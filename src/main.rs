@@ -482,7 +482,7 @@ fn check_update() -> Json<serde_json::Value> {
     let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
 
     match ureq::get(&url)
-        .header("User-Agent", "QRMai-rs")
+        .header("User-Agent", "Re-QRMai")
         .header("Accept", "application/vnd.github+json")
         .call()
     {
