@@ -8,8 +8,26 @@
 /* 显式声明模板扫描路径（相对本文件：static/../templates） */
 @source "../templates";
 
-/* Nord 配色：深色 Polar Night / 浅色 Snow Storm / 强调 Frost / 状态 Aurora */
+/* 本地子集字体：未来荧黑（Glow Sans SC，Wide 宽体，仅含模板用到的字符） */
+@font-face {
+  font-family: 'Glow Sans SC';
+  src: url('/static/fonts/glow-sans-sc-regular.woff') format('woff');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Glow Sans SC';
+  src: url('/static/fonts/glow-sans-sc-bold.woff') format('woff');
+  font-weight: 700;
+  font-display: swap;
+}
+
 @theme {
+  /* 默认字体：中文未来荧黑；--font-display 供英文标题（Archivo Black，Google Fonts 子集加载） */
+  --font-sans: 'Glow Sans SC', 'PingFang SC', 'Microsoft YaHei', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Archivo Black', 'Glow Sans SC', sans-serif;
+
+  /* Nord 配色：深色 Polar Night / 浅色 Snow Storm / 强调 Frost / 状态 Aurora */
   --color-nord-polar-0: #2E3440; /* 深色主背景 */
   --color-nord-polar-1: #3B4252; /* 深色卡片/浮层 */
   --color-nord-polar-2: #434C5E; /* 深色输入框/边框 */

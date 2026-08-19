@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>QRMai 设置</title>
     <link rel="icon" type="image/png" href="/static/icon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap&text=QRMai" rel="stylesheet">
     <link rel="stylesheet" href="/static/tailwind.css">
     <script>
         // 主题初始化（避免闪烁）：localStorage 优先，其次跟随系统
@@ -24,28 +27,28 @@
         .template-preview { max-width: 120px; max-height: 60px; border-radius: 4px; margin-right: 8px; vertical-align: middle; }
     </style>
 </head>
-<body class="bg-nord-snow-2 dark:bg-nord-polar-0 min-h-screen text-nord-polar-1 dark:text-nord-snow-0">
+<body class="bg-nord-snow-2 dark:bg-nord-polar-0 min-h-screen text-nord-polar-1 dark:text-nord-snow-0 font-sans">
 
     <!-- 顶栏 -->
     <header class="bg-white dark:bg-nord-polar-1 shadow-sm sticky top-0 z-10 border-b border-nord-snow-0 dark:border-nord-polar-2">
         <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
             <div class="flex items-center gap-2">
                 <img src="/static/icon.png" alt="QRMai" class="w-8 h-8">
-                <h1 class="text-lg font-semibold">QRMai 设置</h1>
+                <h1 class="text-xl font-semibold font-display">QRMai 设置</h1>
             </div>
             <div class="flex items-center gap-2">
                 <button id="themeToggle" type="button"
-                    class="px-3 py-1.5 rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 text-sm hover:bg-nord-snow-1 dark:hover:bg-nord-polar-2"
+                    class="px-3 py-1.5 rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 text-base hover:bg-nord-snow-1 dark:hover:bg-nord-polar-2"
                     title="切换深色/浅色模式">🌙/☀️</button>
                 <button id="logoutBtn" type="button"
-                    class="px-3 py-1.5 rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 text-sm hover:bg-nord-snow-1 dark:hover:bg-nord-polar-2">登出</button>
+                    class="px-3 py-1.5 rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 text-base hover:bg-nord-snow-1 dark:hover:bg-nord-polar-2">登出</button>
             </div>
         </div>
     </header>
 
     <!-- 提示条 -->
     <div id="toast"
-        class="fixed top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-sm text-white hidden"></div>
+        class="fixed top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-base text-white hidden"></div>
 
     <main class="max-w-6xl mx-auto px-4 py-6">
         <form id="settingsForm" method="post" action="/settings">
@@ -53,71 +56,71 @@
 
                 <!-- 服务设置 -->
                 <section class="bg-white dark:bg-nord-polar-1 rounded-xl shadow-sm border border-nord-snow-0 dark:border-nord-polar-2 p-6">
-                    <h2 class="text-base font-semibold mb-1">🖥️ 服务设置</h2>
-                    <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mb-4">服务监听与访问鉴权</p>
+                    <h2 class="text-lg font-semibold mb-1">🖥️ 服务设置</h2>
+                    <p class="text-sm text-nord-polar-3 dark:text-nord-snow-1 mb-4">服务监听与访问鉴权</p>
                     <div class="grid gap-4">
                         <div>
-                            <label class="block text-sm font-medium mb-1" for="token">访问令牌</label>
+                            <label class="block text-base font-medium mb-1" for="token">访问令牌</label>
                             <input id="token" name="token" type="text" value="{{ config.token }}"
-                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
-                            <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mt-1">登录令牌，同时用于浏览器扩展提交鉴权</p>
+                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-base focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                            <p class="text-sm text-nord-polar-3 dark:text-nord-snow-1 mt-1">登录令牌，同时用于浏览器扩展提交鉴权</p>
                         </div>
                         <div class="grid grid-cols-2 gap-3">
                             <div>
-                                <label class="block text-sm font-medium mb-1" for="host">监听地址</label>
+                                <label class="block text-base font-medium mb-1" for="host">监听地址</label>
                                 <input id="host" name="host" type="text" value="{{ config.host }}"
-                                    class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
-                                <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mt-1">0.0.0.0 = 局域网可访问</p>
+                                    class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-base focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                <p class="text-sm text-nord-polar-3 dark:text-nord-snow-1 mt-1">0.0.0.0 = 局域网可访问</p>
                             </div>
                             <div>
-                                <label class="block text-sm font-medium mb-1" for="port">端口</label>
+                                <label class="block text-base font-medium mb-1" for="port">端口</label>
                                 <input id="port" name="port" type="number" value="{{ config.port }}"
-                                    class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                    class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-base focus:ring-2 focus:ring-nord-frost-2 outline-none">
                             </div>
                         </div>
                         <div>
-                            <label class="block text-sm font-medium mb-1" for="qr_route">二维码访问路径</label>
+                            <label class="block text-base font-medium mb-1" for="qr_route">二维码访问路径</label>
                             <input id="qr_route" name="qr_route" type="text" value="{{ config.qr_route }}"
-                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
-                            <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mt-1">例如 /qrmai、/qrcode</p>
+                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-base focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                            <p class="text-sm text-nord-polar-3 dark:text-nord-snow-1 mt-1">例如 /qrmai、/qrcode</p>
                         </div>
                         <div>
-                            <label class="block text-sm font-medium mb-1" for="cache_duration">二维码缓存秒数</label>
+                            <label class="block text-base font-medium mb-1" for="cache_duration">二维码缓存秒数</label>
                             <input id="cache_duration" name="cache_duration" type="number" value="{{ config.cache_duration }}"
-                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
-                            <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mt-1">0 = 不缓存（预留功能）</p>
+                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-base focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                            <p class="text-sm text-nord-polar-3 dark:text-nord-snow-1 mt-1">0 = 不缓存（预留功能）</p>
                         </div>
                     </div>
                 </section>
 
                 <!-- 二维码获取方式 -->
                 <section class="bg-white dark:bg-nord-polar-1 rounded-xl shadow-sm border border-nord-snow-0 dark:border-nord-polar-2 p-6">
-                    <h2 class="text-base font-semibold mb-1">{% if is_linux %}🐧{% else %}🔗{% endif %} 二维码获取方式</h2>
-                    <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mb-4">选择如何捕获微信打开的二维码链接</p>
+                    <h2 class="text-lg font-semibold mb-1">{% if is_linux %}🐧{% else %}🔗{% endif %} 二维码获取方式</h2>
+                    <p class="text-sm text-nord-polar-3 dark:text-nord-snow-1 mb-4">选择如何捕获微信打开的二维码链接</p>
                     <div class="grid gap-4">
                         {% if is_linux %}
                         <div>
-                            <label class="block text-sm font-medium mb-1" for="capture_mode">捕获模式</label>
+                            <label class="block text-base font-medium mb-1" for="capture_mode">捕获模式</label>
                             <select id="capture_mode" name="capture_mode"
-                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-base focus:ring-2 focus:ring-nord-frost-2 outline-none">
                                 <option value="hijack" {% if config.capture_mode == 'hijack' %}selected{% endif %}>🪝 xdg-open 劫持（Linux）</option>
                                 <option value="extension" {% if config.capture_mode == 'extension' %}selected{% endif %}>🧩 浏览器扩展（跨平台）</option>
                             </select>
                         </div>
                         <div id="hijackFields">
                             <div class="mb-3">
-                                <label class="block text-sm font-medium mb-1" for="wechat_bin">微信可执行文件路径</label>
+                                <label class="block text-base font-medium mb-1" for="wechat_bin">微信可执行文件路径</label>
                                 <input id="wechat_bin" name="wechat_bin" type="text" value="{{ config.wechat_bin }}"
-                                    class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                    class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-base focus:ring-2 focus:ring-nord-frost-2 outline-none">
                             </div>
                             <div>
-                                <label class="block text-sm font-medium mb-1" for="wechat_url_timeout">链接等待超时（秒）</label>
+                                <label class="block text-base font-medium mb-1" for="wechat_url_timeout">链接等待超时（秒）</label>
                                 <input id="wechat_url_timeout" name="wechat_url_timeout" type="number" value="{{ config.wechat_url_timeout }}"
-                                    class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                    class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-base focus:ring-2 focus:ring-nord-frost-2 outline-none">
                             </div>
                         </div>
                         {% else %}
-                        <p class="text-sm text-nord-polar-3 dark:text-nord-snow-1">
+                        <p class="text-base text-nord-polar-3 dark:text-nord-snow-1">
                             当前平台仅支持「浏览器扩展」方式，请安装对应浏览器的扩展后使用。
                         </p>
                         {% endif %}
@@ -126,10 +129,10 @@
 
                 <!-- 位置设置 -->
                 <section class="bg-white dark:bg-nord-polar-1 rounded-xl shadow-sm border border-nord-snow-0 dark:border-nord-polar-2 p-6">
-                    <h2 class="text-base font-semibold mb-1">📍 位置设置</h2>
-                    <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mb-4">坐标格式 X,Y（例如 1087,799），可自动识别</p>
+                    <h2 class="text-lg font-semibold mb-1">📍 位置设置</h2>
+                    <p class="text-sm text-nord-polar-3 dark:text-nord-snow-1 mb-4">坐标格式 X,Y（例如 1087,799），可自动识别</p>
 
-                    <div class="mb-4 p-3 rounded-lg bg-nord-snow-1 dark:bg-nord-polar-2/50 text-xs text-nord-polar-2 dark:text-nord-snow-1">
+                    <div class="mb-4 p-3 rounded-lg bg-nord-snow-1 dark:bg-nord-polar-2/50 text-sm text-nord-polar-2 dark:text-nord-snow-1">
                         当前鼠标坐标：<span id="mouseX">0</span>, <span id="mouseY">0</span>
                         <span class="text-nord-polar-3 dark:text-nord-snow-1">（网页全屏时准确）</span>
                     </div>
@@ -137,84 +140,84 @@
                     <div class="grid gap-4">
                         <div class="grid grid-cols-2 gap-3">
                             <div>
-                                <label class="block text-sm font-medium mb-1" for="p1">P1 坐标 (X,Y)</label>
+                                <label class="block text-base font-medium mb-1" for="p1">P1 坐标 (X,Y)</label>
                                 <input id="p1" name="p1" type="text" value="{{ config.p1 | join(',') }}"
-                                    class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                    class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-base focus:ring-2 focus:ring-nord-frost-2 outline-none">
                             </div>
                             <div>
-                                <label class="block text-sm font-medium mb-1" for="p2">P2 坐标 (X,Y)</label>
+                                <label class="block text-base font-medium mb-1" for="p2">P2 坐标 (X,Y)</label>
                                 <input id="p2" name="p2" type="text" value="{{ config.p2 | join(',') }}"
-                                    class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                    class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-base focus:ring-2 focus:ring-nord-frost-2 outline-none">
                             </div>
                         </div>
 
                         <div class="border-t border-nord-snow-0 dark:border-nord-polar-2 pt-3">
-                            <p class="text-xs font-medium text-nord-polar-3 dark:text-nord-snow-1 mb-2">P2 检测区（自动识别时）</p>
+                            <p class="text-sm font-medium text-nord-polar-3 dark:text-nord-snow-1 mb-2">P2 检测区（自动识别时）</p>
                             <div class="grid grid-cols-2 gap-3">
                                 <div>
-                                    <label class="block text-xs font-medium mb-1" for="p2_region_ratio_x">宽比例</label>
+                                    <label class="block text-sm font-medium mb-1" for="p2_region_ratio_x">宽比例</label>
                                     <input id="p2_region_ratio_x" name="p2_region_ratio_x" type="number" step="0.01" value="{{ config.p2_region_ratio_x }}"
-                                        class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                        class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-base focus:ring-2 focus:ring-nord-frost-2 outline-none">
                                 </div>
                                 <div>
-                                    <label class="block text-xs font-medium mb-1" for="p2_region_ratio_y">高比例</label>
+                                    <label class="block text-sm font-medium mb-1" for="p2_region_ratio_y">高比例</label>
                                     <input id="p2_region_ratio_y" name="p2_region_ratio_y" type="number" step="0.01" value="{{ config.p2_region_ratio_y }}"
-                                        class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                        class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-base focus:ring-2 focus:ring-nord-frost-2 outline-none">
                                 </div>
                                 <div>
-                                    <label class="block text-xs font-medium mb-1" for="p2_max_dx">宽 (px, 0=自动)</label>
+                                    <label class="block text-sm font-medium mb-1" for="p2_max_dx">宽 (px, 0=自动)</label>
                                     <input id="p2_max_dx" name="p2_max_dx" type="number" value="{{ config.p2_max_dx }}"
-                                        class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                        class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-base focus:ring-2 focus:ring-nord-frost-2 outline-none">
                                 </div>
                                 <div>
-                                    <label class="block text-xs font-medium mb-1" for="p2_max_dy">高 (px, 0=自动)</label>
+                                    <label class="block text-sm font-medium mb-1" for="p2_max_dy">高 (px, 0=自动)</label>
                                     <input id="p2_max_dy" name="p2_max_dy" type="number" value="{{ config.p2_max_dy }}"
-                                        class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                        class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-base focus:ring-2 focus:ring-nord-frost-2 outline-none">
                                 </div>
                             </div>
-                            <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mt-1">比例 = 屏幕宽/高 × 值，自动适配分辨率；填像素值优先</p>
+                            <p class="text-sm text-nord-polar-3 dark:text-nord-snow-1 mt-1">比例 = 屏幕宽/高 × 值，自动适配分辨率；填像素值优先</p>
                         </div>
 
                         <div class="flex items-center gap-3">
                             <button id="autoDetectBtn" type="button"
-                                class="px-4 py-2 rounded-lg bg-nord-frost-3 hover:bg-nord-frost-2 text-white text-sm font-medium">🔍 自动识别位置</button>
-                            <span id="detectStatus" class="text-xs text-nord-polar-3 dark:text-nord-snow-1"></span>
+                                class="px-4 py-2 rounded-lg bg-nord-frost-3 hover:bg-nord-frost-2 text-white text-base font-medium">🔍 自动识别位置</button>
+                            <span id="detectStatus" class="text-sm text-nord-polar-3 dark:text-nord-snow-1"></span>
                         </div>
                     </div>
                 </section>
 
                 <!-- 解码设置 -->
                 <section class="bg-white dark:bg-nord-polar-1 rounded-xl shadow-sm border border-nord-snow-0 dark:border-nord-polar-2 p-6">
-                    <h2 class="text-base font-semibold mb-1">🔓 解码设置</h2>
-                    <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mb-4">识别失败时的重试参数</p>
+                    <h2 class="text-lg font-semibold mb-1">🔓 解码设置</h2>
+                    <p class="text-sm text-nord-polar-3 dark:text-nord-snow-1 mb-4">识别失败时的重试参数</p>
                     <div class="grid gap-4">
                         <div>
-                            <label class="block text-sm font-medium mb-1" for="decode_time">超时时间（秒）</label>
+                            <label class="block text-base font-medium mb-1" for="decode_time">超时时间（秒）</label>
                             <input id="decode_time" name="decode.time" type="number" value="{{ config.decode.time }}"
-                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-base focus:ring-2 focus:ring-nord-frost-2 outline-none">
                         </div>
                         <div>
-                            <label class="block text-sm font-medium mb-1" for="decode_retry">重试次数</label>
+                            <label class="block text-base font-medium mb-1" for="decode_retry">重试次数</label>
                             <input id="decode_retry" name="decode.retry_count" type="number" value="{{ config.decode.retry_count }}"
-                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-base focus:ring-2 focus:ring-nord-frost-2 outline-none">
                         </div>
                     </div>
                 </section>
 
                 <!-- 应用设置 -->
                 <section class="bg-white dark:bg-nord-polar-1 rounded-xl shadow-sm border border-nord-snow-0 dark:border-nord-polar-2 p-6">
-                    <h2 class="text-base font-semibold mb-1">⚙️ 应用设置</h2>
-                    <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mb-4">窗口与皮肤相关参数</p>
+                    <h2 class="text-lg font-semibold mb-1">⚙️ 应用设置</h2>
+                    <p class="text-sm text-nord-polar-3 dark:text-nord-snow-1 mb-4">窗口与皮肤相关参数</p>
                     <div class="grid gap-4">
-                        <label class="flex items-center gap-2 text-sm">
+                        <label class="flex items-center gap-2 text-base">
                             <input type="checkbox" name="standalone_mode" value="true" {% if config.standalone_mode %}checked{% endif %}
                                 class="w-4 h-4 rounded border-nord-snow-0 text-nord-frost-3 focus:ring-nord-frost-2">
                             独立窗口显示二维码
                         </label>
                         <div>
-                            <label class="block text-sm font-medium mb-1" for="skin_format">皮肤格式</label>
+                            <label class="block text-base font-medium mb-1" for="skin_format">皮肤格式</label>
                             <select id="skin_format" name="skin_format"
-                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-base focus:ring-2 focus:ring-nord-frost-2 outline-none">
                                 <option value="new" {% if config.skin_format == 'new' %}selected{% endif %}>新版皮肤</option>
                                 <option value="old" {% if config.skin_format == 'old' %}selected{% endif %}>旧版皮肤</option>
                                 <option value="custom" {% if config.skin_format == 'custom' %}selected{% endif %}>自定义皮肤</option>
@@ -222,20 +225,20 @@
                         </div>
                         <div id="customSkinFields" class="grid gap-3 {% if config.skin_format != 'custom' %}hidden{% endif %}">
                             <div>
-                                <label class="block text-xs font-medium mb-1" for="custom_skin_path">皮肤图片路径</label>
+                                <label class="block text-sm font-medium mb-1" for="custom_skin_path">皮肤图片路径</label>
                                 <input id="custom_skin_path" name="custom_skin_path" type="text" value="{{ config.custom_skin_path }}"
-                                    class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                    class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-base focus:ring-2 focus:ring-nord-frost-2 outline-none">
                             </div>
                             <div class="grid grid-cols-2 gap-3">
                                 <div>
-                                    <label class="block text-xs font-medium mb-1" for="custom_skin_qrcode_size">二维码大小</label>
+                                    <label class="block text-sm font-medium mb-1" for="custom_skin_qrcode_size">二维码大小</label>
                                     <input id="custom_skin_qrcode_size" name="custom_skin_qrcode_size" type="number" value="{{ config.custom_skin_qrcode_size }}"
-                                        class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                        class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-base focus:ring-2 focus:ring-nord-frost-2 outline-none">
                                 </div>
                                 <div>
-                                    <label class="block text-xs font-medium mb-1" for="custom_skin_qrcode_point">二维码坐标 (X,Y)</label>
+                                    <label class="block text-sm font-medium mb-1" for="custom_skin_qrcode_point">二维码坐标 (X,Y)</label>
                                     <input id="custom_skin_qrcode_point" name="custom_skin_qrcode_point" type="text" value="{{ config.custom_skin_qrcode_point | join(',') }}"
-                                        class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                        class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-base focus:ring-2 focus:ring-nord-frost-2 outline-none">
                                 </div>
                             </div>
                         </div>
@@ -244,8 +247,8 @@
 
                 <!-- 模板图片 -->
                 <section class="bg-white dark:bg-nord-polar-1 rounded-xl shadow-sm border border-nord-snow-0 dark:border-nord-polar-2 p-6">
-                    <h2 class="text-base font-semibold mb-1">🖼️ 模板图片</h2>
-                    <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mb-4">P1/P2 截图模板，用于自动识别位置；上传覆盖默认模板</p>
+                    <h2 class="text-lg font-semibold mb-1">🖼️ 模板图片</h2>
+                    <p class="text-sm text-nord-polar-3 dark:text-nord-snow-1 mb-4">P1/P2 截图模板，用于自动识别位置；上传覆盖默认模板</p>
 
                     <div class="grid gap-4">
                         <div class="flex items-center gap-3">
@@ -253,15 +256,15 @@
                                 src="{% if config.p1_image %}/img/p1_user.png{% else %}/img/p1.png{% endif %}"
                                 alt="P1 模板" onerror="this.style.display='none'">
                             <div>
-                                <p class="text-sm font-medium">P1 — 生成二维码按钮</p>
+                                <p class="text-base font-medium">P1 — 生成二维码按钮</p>
                                 <div class="flex gap-2 mt-1">
                                     <input type="file" id="p1FileInput" accept="image/png" class="hidden">
                                     <button id="p1UploadBtn" type="button"
-                                        class="px-3 py-1.5 rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 text-xs hover:bg-nord-snow-1 dark:hover:bg-nord-polar-2">📤 上传</button>
+                                        class="px-3 py-1.5 rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 text-sm hover:bg-nord-snow-1 dark:hover:bg-nord-polar-2">📤 上传</button>
                                     <button id="p1DeleteBtn" type="button"
-                                        class="px-3 py-1.5 rounded-lg border border-nord-aurora-red dark:border-nord-aurora-red text-xs text-nord-aurora-red dark:text-nord-aurora-red hover:bg-nord-aurora-red/10 dark:hover:bg-nord-aurora-red/20 {% if not config.p1_image %}hidden{% endif %}">🗑 删除</button>
+                                        class="px-3 py-1.5 rounded-lg border border-nord-aurora-red dark:border-nord-aurora-red text-sm text-nord-aurora-red dark:text-nord-aurora-red hover:bg-nord-aurora-red/10 dark:hover:bg-nord-aurora-red/20 {% if not config.p1_image %}hidden{% endif %}">🗑 删除</button>
                                 </div>
-                                <span id="p1Status" class="text-xs text-nord-polar-3 dark:text-nord-snow-1"></span>
+                                <span id="p1Status" class="text-sm text-nord-polar-3 dark:text-nord-snow-1"></span>
                             </div>
                         </div>
 
@@ -270,15 +273,15 @@
                                 src="{% if config.p2_image %}/img/p2_user.png{% else %}/img/p2.png{% endif %}"
                                 alt="P2 模板" onerror="this.style.display='none'">
                             <div>
-                                <p class="text-sm font-medium">P2 — 二维码消息</p>
+                                <p class="text-base font-medium">P2 — 二维码消息</p>
                                 <div class="flex gap-2 mt-1">
                                     <input type="file" id="p2FileInput" accept="image/png" class="hidden">
                                     <button id="p2UploadBtn" type="button"
-                                        class="px-3 py-1.5 rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 text-xs hover:bg-nord-snow-1 dark:hover:bg-nord-polar-2">📤 上传</button>
+                                        class="px-3 py-1.5 rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 text-sm hover:bg-nord-snow-1 dark:hover:bg-nord-polar-2">📤 上传</button>
                                     <button id="p2DeleteBtn" type="button"
-                                        class="px-3 py-1.5 rounded-lg border border-nord-aurora-red dark:border-nord-aurora-red text-xs text-nord-aurora-red dark:text-nord-aurora-red hover:bg-nord-aurora-red/10 dark:hover:bg-nord-aurora-red/20 {% if not config.p2_image %}hidden{% endif %}">🗑 删除</button>
+                                        class="px-3 py-1.5 rounded-lg border border-nord-aurora-red dark:border-nord-aurora-red text-sm text-nord-aurora-red dark:text-nord-aurora-red hover:bg-nord-aurora-red/10 dark:hover:bg-nord-aurora-red/20 {% if not config.p2_image %}hidden{% endif %}">🗑 删除</button>
                                 </div>
-                                <span id="p2Status" class="text-xs text-nord-polar-3 dark:text-nord-snow-1"></span>
+                                <span id="p2Status" class="text-sm text-nord-polar-3 dark:text-nord-snow-1"></span>
                             </div>
                         </div>
                     </div>
@@ -286,8 +289,8 @@
 
                 <!-- 皮肤管理 -->
                 <section class="bg-white dark:bg-nord-polar-1 rounded-xl shadow-sm border border-nord-snow-0 dark:border-nord-polar-2 p-6">
-                    <h2 class="text-base font-semibold mb-1">🎨 皮肤管理</h2>
-                    <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mb-4">上传多个皮肤，可选择随机或固定使用</p>
+                    <h2 class="text-lg font-semibold mb-1">🎨 皮肤管理</h2>
+                    <p class="text-sm text-nord-polar-3 dark:text-nord-snow-1 mb-4">上传多个皮肤，可选择随机或固定使用</p>
 
                     <div id="skinList" class="mb-4 min-h-10">
                         {% set skins = config.skin_images %}
@@ -302,22 +305,22 @@
                             </div>
                             {% endfor %}
                         {% else %}
-                            <span class="text-xs text-nord-polar-3 dark:text-nord-snow-1">暂无皮肤，请上传</span>
+                            <span class="text-sm text-nord-polar-3 dark:text-nord-snow-1">暂无皮肤，请上传</span>
                         {% endif %}
                     </div>
 
                     <div class="flex items-center gap-3 mb-4">
                         <input type="file" id="skinFileInput" accept="image/png" class="hidden">
                         <button id="skinUploadBtn" type="button"
-                            class="px-3 py-1.5 rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 text-xs hover:bg-nord-snow-1 dark:hover:bg-nord-polar-2">📤 上传皮肤</button>
-                        <span id="skinStatus" class="text-xs text-nord-polar-3 dark:text-nord-snow-1"></span>
+                            class="px-3 py-1.5 rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 text-sm hover:bg-nord-snow-1 dark:hover:bg-nord-polar-2">📤 上传皮肤</button>
+                        <span id="skinStatus" class="text-sm text-nord-polar-3 dark:text-nord-snow-1"></span>
                     </div>
 
                     <div class="grid gap-3">
                         <div>
-                            <label class="block text-sm font-medium mb-1" for="skin_mode">皮肤选择模式</label>
+                            <label class="block text-base font-medium mb-1" for="skin_mode">皮肤选择模式</label>
                             <select id="skin_mode" name="skin_mode"
-                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-sm focus:ring-2 focus:ring-nord-frost-2 outline-none">
+                                class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-base focus:ring-2 focus:ring-nord-frost-2 outline-none">
                                 <option value="random" {% if config.skin_mode == 'random' %}selected{% endif %}>🎲 随机</option>
                                 <option value="fixed" {% if config.skin_mode == 'fixed' %}selected{% endif %}>📍 固定</option>
                             </select>
@@ -328,14 +331,14 @@
 
                 <!-- 浏览器扩展说明 -->
                 <section class="bg-white dark:bg-nord-polar-1 rounded-xl shadow-sm border border-nord-snow-0 dark:border-nord-polar-2 p-6">
-                    <h2 class="text-base font-semibold mb-1">🧩 浏览器扩展</h2>
-                    <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mb-4">安装后微信打开的二维码链接会被自动拦截转发（Chrome / Edge / Firefox）</p>
-                    <ol class="list-decimal list-inside text-sm text-nord-polar-2 dark:text-nord-snow-1 space-y-1 mb-4">
+                    <h2 class="text-lg font-semibold mb-1">🧩 浏览器扩展</h2>
+                    <p class="text-sm text-nord-polar-3 dark:text-nord-snow-1 mb-4">安装后微信打开的二维码链接会被自动拦截转发（Chrome / Edge / Firefox）</p>
+                    <ol class="list-decimal list-inside text-base text-nord-polar-2 dark:text-nord-snow-1 space-y-1 mb-4">
                         <li>打开浏览器扩展管理页，开启「开发者模式」</li>
-                        <li>点击「加载已解压的扩展」，选择 <code class="text-xs bg-nord-snow-1 dark:bg-nord-polar-2 px-1 rounded">extension/</code> 文件夹</li>
+                        <li>点击「加载已解压的扩展」，选择 <code class="text-sm bg-nord-snow-1 dark:bg-nord-polar-2 px-1 rounded">extension/</code> 文件夹</li>
                         <li>点击扩展图标 → 选项，确认服务端地址和令牌正确</li>
                     </ol>
-                    <div class="p-3 rounded-lg bg-nord-snow-1 dark:bg-nord-polar-2/50 text-xs text-nord-polar-2 dark:text-nord-snow-1">
+                    <div class="p-3 rounded-lg bg-nord-snow-1 dark:bg-nord-polar-2/50 text-sm text-nord-polar-2 dark:text-nord-snow-1">
                         <p>服务端地址：<code class="px-1 rounded bg-nord-snow-0 dark:bg-nord-polar-3">{{ config.host }}:{{ config.port }}</code></p>
                         <p>路由前缀：<code class="px-1 rounded bg-nord-snow-0 dark:bg-nord-polar-3">{{ config.qr_route }}</code></p>
                         <p>访问令牌：<code class="px-1 rounded bg-nord-snow-0 dark:bg-nord-polar-3">{{ config.token }}</code></p>
@@ -344,24 +347,24 @@
 
                 <!-- 关于 -->
                 <section class="bg-white dark:bg-nord-polar-1 rounded-xl shadow-sm border border-nord-snow-0 dark:border-nord-polar-2 p-6">
-                    <h2 class="text-base font-semibold mb-1">ℹ️ 关于</h2>
-                    <p class="text-xs text-nord-polar-3 dark:text-nord-snow-1 mb-4">
+                    <h2 class="text-lg font-semibold mb-1">ℹ️ 关于</h2>
+                    <p class="text-sm text-nord-polar-3 dark:text-nord-snow-1 mb-4">
                         项目地址：<a href="https://github.com/SodaCodeSave/QRmai" target="_blank" class="text-nord-frost-2 dark:text-nord-frost-1 underline">GitHub</a>
                     </p>
                     <div class="flex gap-2">
                         <button id="checkUpdateBtn" type="button"
-                            class="px-3 py-1.5 rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 text-xs hover:bg-nord-snow-1 dark:hover:bg-nord-polar-2">检查更新</button>
+                            class="px-3 py-1.5 rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 text-sm hover:bg-nord-snow-1 dark:hover:bg-nord-polar-2">检查更新</button>
                         <button id="manualUpdateBtn" type="button"
-                            class="px-3 py-1.5 rounded-lg bg-nord-frost-3 hover:bg-nord-frost-2 text-white text-xs font-medium">手动更新</button>
+                            class="px-3 py-1.5 rounded-lg bg-nord-frost-3 hover:bg-nord-frost-2 text-white text-sm font-medium">手动更新</button>
                     </div>
-                    <div id="updateStatus" class="mt-3 text-xs text-nord-polar-2 dark:text-nord-snow-1 hidden"></div>
+                    <div id="updateStatus" class="mt-3 text-sm text-nord-polar-2 dark:text-nord-snow-1 hidden"></div>
                 </section>
             </div>
 
             <!-- 保存栏 -->
             <div class="mt-6 flex justify-end">
                 <button type="submit"
-                    class="px-6 py-2.5 rounded-lg bg-nord-frost-3 hover:bg-nord-frost-2 text-white text-sm font-medium shadow">
+                    class="px-6 py-2.5 rounded-lg bg-nord-frost-3 hover:bg-nord-frost-2 text-white text-base font-medium shadow">
                     💾 保存全部设置
                 </button>
             </div>
@@ -380,7 +383,7 @@
         var toastTimer = null;
         function toast(msg, ok) {
             toastEl.textContent = msg;
-            toastEl.className = 'fixed top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-sm text-white '
+            toastEl.className = 'fixed top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-base text-white '
                 + (ok === false ? 'bg-nord-aurora-red' : 'bg-nord-aurora-green');
             toastEl.classList.remove('hidden');
             clearTimeout(toastTimer);
