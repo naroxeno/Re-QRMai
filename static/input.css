@@ -11,13 +11,13 @@
 /* 本地子集字体：未来荧黑（Glow Sans SC，Wide 宽体，仅含模板用到的字符） */
 @font-face {
   font-family: 'Glow Sans SC';
-  src: url('/static/fonts/glow-sans-sc-regular.woff') format('woff');
+  src: url('/static/fonts/glow-sans-sc-regular.woff?v=2') format('woff');
   font-weight: 400;
   font-display: swap;
 }
 @font-face {
   font-family: 'Glow Sans SC';
-  src: url('/static/fonts/glow-sans-sc-bold.woff') format('woff');
+  src: url('/static/fonts/glow-sans-sc-bold.woff?v=2') format('woff');
   font-weight: 700;
   font-display: swap;
 }
