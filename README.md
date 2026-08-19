@@ -96,6 +96,10 @@ nu build.nu all
 ```
 
 > 需要 `nushell`（`nu`）执行 build.nu；Tailwind CSS 已在 `static/` 预编译，一般无需重新生成。
+> 修改模板类名后需重新编译（Tailwind v4，CSS-first 配置见 `static/input.css`）：
+> ```bash
+> tailwindcss -i static/input.css -o static/tailwind.css --minify
+> ```
 
 ## 项目结构
 

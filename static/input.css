@@ -1,3 +1,32 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* Tailwind CSS v4 入口（CSS-first 配置） */
+
+@import "tailwindcss";
+
+/* 深色模式：class 策略（html.dark 由页面内联脚本切换） */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* 显式声明模板扫描路径（相对本文件：static/../templates） */
+@source "../templates";
+
+/* Nord 配色：深色 Polar Night / 浅色 Snow Storm / 强调 Frost / 状态 Aurora */
+@theme {
+  --color-nord-polar-0: #2E3440; /* 深色主背景 */
+  --color-nord-polar-1: #3B4252; /* 深色卡片/浮层 */
+  --color-nord-polar-2: #434C5E; /* 深色输入框/边框 */
+  --color-nord-polar-3: #4C566A; /* 深色弱边框/弱文本 */
+
+  --color-nord-snow-0: #D8DEE9;  /* 浅色边框/强分隔 */
+  --color-nord-snow-1: #E5E9F0;  /* 浅色内嵌/辅助底 */
+  --color-nord-snow-2: #ECEFF4;  /* 浅色主背景 */
+
+  --color-nord-frost-0: #8FBCBB;
+  --color-nord-frost-1: #88C0D0;
+  --color-nord-frost-2: #81A1C1; /* hover */
+  --color-nord-frost-3: #5E81AC; /* 主按钮/链接 */
+
+  --color-nord-aurora-red: #BF616A;
+  --color-nord-aurora-orange: #D08770;
+  --color-nord-aurora-yellow: #EBCB8B;
+  --color-nord-aurora-green: #A3BE8C;
+  --color-nord-aurora-purple: #B48EAD;
+}
