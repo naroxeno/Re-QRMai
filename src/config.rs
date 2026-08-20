@@ -117,7 +117,7 @@ impl Default for Config {
             wechat_bin: "/opt/wechat/wechat".into(),
             wechat_url_timeout: 5,
             auto_detect_p1p2: false,
-            template_threshold: 0.8,
+            template_threshold: 0.6,
             p2_region_ratio_x: 0.2,
             p2_region_ratio_y: 0.2,
             p2_max_dx: 0,
@@ -461,7 +461,7 @@ version = "x"
 wechat_bin = "/opt/wechat/wechat"
 wechat_url_timeout = 5
 auto_detect_p1p2 = false
-template_threshold = 0.8
+template_threshold = 0.6
 skin_mode = "random"
 skin_index = 0
 skin_images = []

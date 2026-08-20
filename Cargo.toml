@@ -50,3 +50,4 @@ opt-level = "z"
 strip = "symbols"
 lto = "fat"
 panic = "abort"
+overflow-checks = false
