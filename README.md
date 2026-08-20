@@ -80,7 +80,7 @@
 | `capture_mode` | Linux: hijack / 其他: extension | 捕获模式 |
 | `wechat_bin` | /opt/wechat/wechat | Linux 下微信可执行文件路径（劫持模式） |
 | `wechat_url_timeout` | 5 | 等待微信 URL 的超时时间（秒），扩展模式自动放宽到 ≥15s |
-| `template_threshold` | 0.6 | 模板匹配置信度阈值（梯度匹配口径较严，0.6 偏宽松；识别不准可继续调低） |
+| `template_threshold` | 0.7 | 模板匹配置信度阈值（梯度匹配口径较严；识别不准可调低，误匹配可调高） |
 | `p2_region_ratio_x/y` | 0.2 / 0.2 | P2 检测区 = 屏幕宽/高 × 比例（自动适配分辨率） |
 
 其他高级配置（皮肤、独立模式等）请参考配置文件中的注释。

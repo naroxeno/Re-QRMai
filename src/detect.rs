@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use image::ImageBuffer;
 use log::{error, info, warn};
 use std::path::Path;
-use template_matching::{find_extremes, match_template, Image as TmImage, MatchTemplateMethod};
+use template_matching::{match_template, Image as TmImage, MatchTemplateMethod};
 
 /// 模板匹配结果（x/y 为匹配框中心点）
 #[derive(Debug, Clone)]
@@ -57,6 +57,65 @@ fn to_gradient_f32(
     out
 }
 
+/// 在 SSD 结果图中找多个局部极小值（NMS），返回按 SSD 升序的 top-N 个 (x, y, value)。
+///
+/// 原 find_extremes 只取全局唯一最优，屏幕上存在多个相似区域时会漏掉次优候选，
+/// 导致误匹配；这里收集多个候选供上层做语义/位置校验。
+fn local_minima_nms(
+    data: &[f32],
+    width: u32,
+    height: u32,
+    radius: usize,
+    max_count: usize,
+) -> Vec<(u32, u32, f32)> {
+    let w = width as usize;
+    let h = height as usize;
+    if w < 3 || h < 3 {
+        return Vec::new();
+    }
+    let mut minima: Vec<(u32, u32, f32)> = Vec::new();
+    for y in 1..h - 1 {
+        for x in 1..w - 1 {
+            let v = data[y * w + x];
+            let mut is_min = true;
+            'nbr: for dy in -1i32..=1 {
+                for dx in -1i32..=1 {
+                    if dx == 0 && dy == 0 {
+                        continue;
+                    }
+                    let nx = (x as i32 + dx) as usize;
+                    let ny = (y as i32 + dy) as usize;
+                    if data[ny * w + nx] < v {
+                        is_min = false;
+                        break 'nbr;
+                    }
+                }
+            }
+            if is_min {
+                minima.push((x as u32, y as u32, v));
+            }
+        }
+    }
+    // SSD 升序（越小越匹配）
+    minima.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+    // 邻域去重：跳过与已选候选距离 < radius 的点
+    let mut picked: Vec<(u32, u32, f32)> = Vec::new();
+    for m in minima {
+        let too_close = picked.iter().any(|p| {
+            (p.0 as i64 - m.0 as i64).abs() < radius as i64
+                && (p.1 as i64 - m.1 as i64).abs() < radius as i64
+        });
+        if too_close {
+            continue;
+        }
+        picked.push(m);
+        if picked.len() >= max_count {
+            break;
+        }
+    }
+    picked
+}
+
 /// 多尺度模板匹配（在 Sobel 梯度图上进行）
 ///
 /// 收集所有「置信度 ≥ 阈值」的候选（每个尺度 1 个全局最优），
@@ -104,28 +163,29 @@ pub fn match_template_multiscale(
             TmImage::new(scaled.as_raw(), scaled.width(), scaled.height()),
             MatchTemplateMethod::SumOfSquaredDifferences,
         );
-        let extremes = find_extremes(&result);
 
-        // 置信度 = 1 - 平均内容差 / 有效像素数；内容对齐时接近 1
-        let confidence = 1.0 - (extremes.min_value / n_active).clamp(0.0, 1.0);
-
-        info!(
-            "[Detect] {label} scale={scale:.2} 候选 ({}, {}) 置信度={confidence:.3} (有效像素 {n_active:.0})",
-            extremes.min_value_location.0,
-            extremes.min_value_location.1
-        );
-
-        if confidence >= threshold {
-            let cx = extremes.min_value_location.0 + tw / 2;
-            let cy = extremes.min_value_location.1 + th / 2;
-            info!(
-                "[Detect] {label} scale={scale:.2} 达标: 中心 ({cx}, {cy}) 置信度={confidence:.3}",
-            );
-            cands.push(MatchResult {
-                x: cx,
-                y: cy,
-                confidence,
-            });
+        // NMS 收集多个局部极小值（每尺度 top-5），替代 find_extremes 的全局唯一最优
+        let minima = local_minima_nms(result.data.as_ref(), result.width, result.height, 8, 5);
+        let mut scale_hits = 0;
+        for (x, y, min_value) in minima {
+            // 置信度 = 1 - 平均内容差 / 有效像素数；内容对齐时接近 1
+            let confidence = 1.0 - (min_value / n_active).clamp(0.0, 1.0);
+            if confidence >= threshold {
+                let cx = x + tw / 2;
+                let cy = y + th / 2;
+                info!(
+                    "[Detect] {label} scale={scale:.2} 候选 ({cx}, {cy}) 置信度={confidence:.3}",
+                );
+                cands.push(MatchResult {
+                    x: cx,
+                    y: cy,
+                    confidence,
+                });
+                scale_hits += 1;
+            }
+        }
+        if scale_hits > 0 {
+            info!("[Detect] {label} scale={scale:.2} 达标 {scale_hits} 个 (有效像素 {n_active:.0})");
         }
     }
 
@@ -167,18 +227,14 @@ fn dist2_to_p1(c: &MatchResult, p1: [u32; 2]) -> u64 {
     dx * dx + dy * dy
 }
 
-/// 语义化选择 P2：
-/// 1. 位置约束：候选必须在 P1 左上方（cx < p1.x 且 cy < p1.y）且距离不太远
-///    （max_dx/max_dy 由调用方按屏幕分辨率计算或手动指定）；
-/// 2. 区域内用 best（最高置信度）；与最佳置信度差距 < 容差的并列者中选离 P1 最近的；
-/// 3. 区域内无候选 → 退回全屏 best 并打警告。
-fn pick_p2(
+/// 在 P1 左上方区域内选 P2（仅区域，不 fallback）：
+/// 区域内 best（最高置信度），与最佳差距 < 容差的并列者选离 P1 最近。
+fn pick_p2_in_region(
     cands: &[MatchResult],
     p1: [u32; 2],
     max_dx: u32,
     max_dy: u32,
 ) -> Option<MatchResult> {
-    // 1) 位置约束过滤
     let in_region: Vec<&MatchResult> = cands
         .iter()
         .filter(|c| {
@@ -186,34 +242,45 @@ fn pick_p2(
         })
         .collect();
 
-    if !in_region.is_empty() {
-        // 2) 区域内 best + 置信度容差（并列者选离 P1 最近）
-        let best_conf = in_region
-            .iter()
-            .map(|c| c.confidence)
-            .fold(0.0f32, f32::max);
-        let tied = in_region
-            .iter()
-            .filter(|c| best_conf - c.confidence < CONF_TOLERANCE)
-            .count();
-        let chosen = in_region
-            .iter()
-            .filter(|c| best_conf - c.confidence < CONF_TOLERANCE)
-            .min_by_key(|c| dist2_to_p1(c, p1))
-            .map(|c| (*c).clone());
-        if let Some(c) = &chosen {
-            info!(
-                "[Detect] P2 区域候选 {} 个(并列 {tied}), 选中中心 ({}, {}) 置信度={:.3}",
-                in_region.len(),
-                c.x,
-                c.y,
-                c.confidence
-            );
-        }
-        return chosen;
+    if in_region.is_empty() {
+        return None;
     }
+    let best_conf = in_region
+        .iter()
+        .map(|c| c.confidence)
+        .fold(0.0f32, f32::max);
+    let tied = in_region
+        .iter()
+        .filter(|c| best_conf - c.confidence < CONF_TOLERANCE)
+        .count();
+    let chosen = in_region
+        .iter()
+        .filter(|c| best_conf - c.confidence < CONF_TOLERANCE)
+        .min_by_key(|c| dist2_to_p1(c, p1))
+        .map(|c| (*c).clone());
+    if let Some(c) = &chosen {
+        info!(
+            "[Detect] P2 区域候选 {} 个(并列 {tied}), 选中中心 ({}, {}) 置信度={:.3}",
+            in_region.len(),
+            c.x,
+            c.y,
+            c.confidence
+        );
+    }
+    chosen
+}
 
-    // 3) 兜底：全屏 best + 警告
+/// 语义化选择 P2（带兜底）：区域内选 P2；区域内无候选 → 退回全屏 best 并打警告。
+fn pick_p2(
+    cands: &[MatchResult],
+    p1: [u32; 2],
+    max_dx: u32,
+    max_dy: u32,
+) -> Option<MatchResult> {
+    if let Some(c) = pick_p2_in_region(cands, p1, max_dx, max_dy) {
+        return Some(c);
+    }
+    // 兜底：全屏 best + 警告
     if let Some(c) = pick_best(cands) {
         warn!(
             "[Detect] P2 未在 P1 左上方区域 ({max_dx}x{max_dy}) 内找到候选 (P1=({},{}))，退回全屏最佳 ({}, {}) 置信度={:.3}，请检查模板",
@@ -222,6 +289,39 @@ fn pick_p2(
         return Some(c);
     }
     None
+}
+
+/// P1-P2 组合选择：
+/// 利用「P2 在 P1 左上方且不太远」的语义——对 P1 候选按置信度降序，
+/// 选第一个「其左上方区域存在 P2 候选」的 P1（及其 P2）。
+/// 这能纠正误匹配：若 P1 上方存在置信度更高的相似按钮，其左上方没有二维码消息 P2，
+/// 会被跳过，选到正确的 P1。
+fn select_pair(
+    p1_cands: &[MatchResult],
+    p2_cands: &[MatchResult],
+    max_dx: u32,
+    max_dy: u32,
+) -> (Option<MatchResult>, Option<MatchResult>) {
+    let mut p1_sorted = p1_cands.to_vec();
+    p1_sorted.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
+
+    for p1 in &p1_sorted {
+        if let Some(p2) = pick_p2_in_region(p2_cands, [p1.x, p1.y], max_dx, max_dy) {
+            info!(
+                "[Detect] P1-P2 组合校验通过: P1=({}, {}) + P2=({}, {})",
+                p1.x, p1.y, p2.x, p2.y
+            );
+            return (Some(p1.clone()), Some(p2));
+        }
+    }
+
+    // 无组合：退回各自 best（P2 走带兜底的语义选择）
+    let p1 = pick_best(p1_cands);
+    let p2 = p1
+        .as_ref()
+        .and_then(|p1| pick_p2(p2_cands, [p1.x, p1.y], max_dx, max_dy))
+        .or_else(|| pick_best(p2_cands));
+    (p1, p2)
 }
 
 /// P1/P2 识别结果（None 表示未识别到）
@@ -253,16 +353,11 @@ pub fn detect_p1p2(
         .transpose()?
         .unwrap_or_default();
 
-    let p1 = pick_best(&p1_cands).map(|m| [m.x, m.y]);
+    // P1-P2 组合校验：P2 在 P1 左上方 → 优先选「左上方有 P2 候选」的 P1，
+    // 纠正 P1 误匹配（上方相似按钮置信度更高但左上方无二维码消息）
+    let (p1m, p2m) = select_pair(&p1_cands, &p2_cands, p2_max_dx, p2_max_dy);
 
-    // P2 优先在 P1 左上方区域内语义化选择；P1 未识别到则无锚点，退回全屏 best
-    let p2 = if let Some(p1) = p1 {
-        pick_p2(&p2_cands, p1, p2_max_dx, p2_max_dy).map(|m| [m.x, m.y])
-    } else {
-        pick_best(&p2_cands).map(|m| [m.x, m.y])
-    };
-
-    Ok((p1, p2))
+    Ok((p1m.map(|m| [m.x, m.y]), p2m.map(|m| [m.x, m.y])))
 }
 
 // ── 跨平台屏幕截图 ────────────────────────────────────────
@@ -533,5 +628,37 @@ mod tests {
         let cands = vec![mr(10, 10, 0.6), mr(20, 20, 0.9), mr(30, 30, 0.8)];
         let best = pick_best(&cands).unwrap();
         assert_eq!((best.x, best.y), (20, 20));
+    }
+
+    /// P1-P2 组合校验：上方相似按钮置信度更高但左上方无 P2 →
+    /// 应跳过，选「左上方有 P2 候选」的正确 P1
+    #[test]
+    fn select_pair_corrects_false_p1() {
+        // 误匹配 P1（上方相似按钮，置信度更高），其左上方没有 P2
+        let p1_false = mr(1890, 1200, 0.95);
+        // 正确 P1，其左上方 (x<1892, y<1407) 有 P2
+        let p1_true = mr(1892, 1407, 0.90);
+        let p1_cands = vec![p1_false, p1_true];
+
+        // P2 候选：正确 P1 左上方区域内的二维码消息
+        let p2_true = mr(1380, 1254, 0.85);
+        let p2_far = mr(500, 500, 0.88); // 区域外，置信度更高但不满足位置
+        let p2_cands = vec![p2_true, p2_far];
+
+        let (p1, p2) = select_pair(&p1_cands, &p2_cands, 800, 600);
+        let p1 = p1.expect("应选中 P1");
+        let p2 = p2.expect("应选中 P2");
+        assert_eq!((p1.x, p1.y), (1892, 1407), "应纠正误匹配，选正确 P1");
+        assert_eq!((p2.x, p2.y), (1380, 1254), "P2 应为正确 P1 左上方区域的候选");
+    }
+
+    /// P1-P2 组合校验：无任何组合 → 退回各自 best（P2 全屏兜底）
+    #[test]
+    fn select_pair_falls_back_without_combination() {
+        let p1_cands = vec![mr(100, 100, 0.95)];
+        let p2_cands = vec![mr(800, 800, 0.90), mr(820, 820, 0.88)];
+        let (p1, p2) = select_pair(&p1_cands, &p2_cands, 200, 200);
+        assert_eq!(p1.as_ref().map(|m| m.x), Some(100));
+        assert_eq!(p2.as_ref().map(|m| m.x), Some(800), "无组合时退回全屏最佳");
     }
 }
