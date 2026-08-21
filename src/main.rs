@@ -4,7 +4,8 @@ use minijinja::{context, Environment};
 use crate::config::{Config, load_or_create_config, render_config_toml};
 use crate::mouse::MouseController;
 use crate::wechat::{fetch_and_decode, WechatHijack};
-use rocket::form::Form;
+use rocket::fs::TempFile;
+use rocket::form::{Form, FromForm};
 use rocket::fs::FileServer;
 use rocket::http::{Cookie, CookieJar, ContentType, Status};
 use rocket::response::content::RawHtml;
@@ -354,6 +355,149 @@ fn logout(cookies: &CookieJar<'_>) -> Redirect {
     Redirect::to("/login")
 }
 
+/// 鉴权辅助：private cookie 是否匹配配置 token
+fn is_auth(cookies: &CookieJar<'_>, token: &str) -> bool {
+    cookies
+        .get_private("auth_token")
+        .map(|c| c.value() == token)
+        .unwrap_or(false)
+}
+
+// ── 模板 / 皮肤上传与删除（multipart） ─────────────────
+
+/// multipart 上传载荷（字段名 file，与前端 uploadFile 一致）
+#[derive(FromForm)]
+struct Upload<'r> {
+    file: TempFile<'r>,
+}
+
+/// 校验鉴权并保存上传文件到 dest
+async fn save_upload(
+    config: &State<SharedConfig>,
+    cookies: &CookieJar<'_>,
+    upload: Form<Upload<'_>>,
+    dest: &str,
+) -> Json<serde_json::Value> {
+    let token = config.read().await.token.clone();
+    if !is_auth(cookies, &token) {
+        return Json(serde_json::json!({"error": "未授权，请重新登录"}));
+    }
+    let file = upload.into_inner().file;
+    match file.path() {
+        Some(src) => match std::fs::copy(src, dest) {
+            Ok(_) => {
+                info!("[QRMai] 已保存上传文件 → {dest}");
+                Json(serde_json::json!({"success": true}))
+            }
+            Err(e) => Json(serde_json::json!({"error": format!("保存失败: {e}")})),
+        },
+        None => Json(serde_json::json!({"error": "未接收到文件数据"})),
+    }
+}
+
+/// 上传 P1 模板（覆盖 img/p1_user.png）
+#[post("/upload_p1", data = "<upload>")]
+async fn upload_p1(
+    config: &State<SharedConfig>,
+    cookies: &CookieJar<'_>,
+    upload: Form<Upload<'_>>,
+) -> Json<serde_json::Value> {
+    save_upload(config, cookies, upload, "img/p1_user.png").await
+}
+
+/// 上传 P2 模板（覆盖 img/p2_user.png）
+#[post("/upload_p2", data = "<upload>")]
+async fn upload_p2(
+    config: &State<SharedConfig>,
+    cookies: &CookieJar<'_>,
+    upload: Form<Upload<'_>>,
+) -> Json<serde_json::Value> {
+    save_upload(config, cookies, upload, "img/p2_user.png").await
+}
+
+/// 上传皮肤（保存为 img/skin_<时间戳>.png 并加入 skin_images 配置）
+#[post("/upload_skin", data = "<upload>")]
+async fn upload_skin(
+    config: &State<SharedConfig>,
+    cookies: &CookieJar<'_>,
+    upload: Form<Upload<'_>>,
+) -> Json<serde_json::Value> {
+    let token = config.read().await.token.clone();
+    if !is_auth(cookies, &token) {
+        return Json(serde_json::json!({"error": "未授权，请重新登录"}));
+    }
+    let file = upload.into_inner().file;
+    let Some(src) = file.path() else {
+        return Json(serde_json::json!({"error": "未接收到文件数据"}));
+    };
+
+    let name = format!(
+        "skin_{}.png",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    );
+    let dest = Path::new("img").join(&name);
+    if let Err(e) = std::fs::copy(src, &dest) {
+        return Json(serde_json::json!({"error": format!("保存失败: {e}")}));
+    }
+
+    // 更新配置：skin_images 追加 + 写回 config.toml
+    let mut c = config.write().await;
+    c.skin_images.push(name.clone());
+    if let Err(e) = std::fs::write("config.toml", render_config_toml(&c)) {
+        error!("[QRMai] 写入配置失败: {e}");
+    }
+    info!("[QRMai] 已保存皮肤 → {dest:?}");
+    Json(serde_json::json!({"success": true, "filename": name}))
+}
+
+/// 删除模板 / 皮肤（载荷 {filename}）
+#[derive(Deserialize)]
+struct DeleteSkinPayload {
+    filename: String,
+}
+
+#[post("/delete_skin", format = "json", data = "<body>")]
+async fn delete_skin(
+    config: &State<SharedConfig>,
+    cookies: &CookieJar<'_>,
+    body: Json<DeleteSkinPayload>,
+) -> Json<serde_json::Value> {
+    let token = config.read().await.token.clone();
+    if !is_auth(cookies, &token) {
+        return Json(serde_json::json!({"error": "未授权，请重新登录"}));
+    }
+
+    // 防目录穿越：只取文件名 basename
+    let name = match Path::new(&body.filename).file_name().and_then(|n| n.to_str()) {
+        Some(n) => n.to_string(),
+        None => return Json(serde_json::json!({"error": "非法文件名"})),
+    };
+    let target = Path::new("img").join(&name);
+    if target.exists() {
+        if let Err(e) = std::fs::remove_file(&target) {
+            return Json(serde_json::json!({"error": format!("删除失败: {e}")}));
+        }
+    }
+
+    // 更新配置：皮肤列表移除；删除用户模板时回退到开发者默认模板
+    let mut c = config.write().await;
+    c.skin_images.retain(|s| s != &name);
+    if name == "p1_user.png" {
+        c.p1_image = "p1.png".into();
+    }
+    if name == "p2_user.png" {
+        c.p2_image = "p2.png".into();
+    }
+    if let Err(e) = std::fs::write("config.toml", render_config_toml(&c)) {
+        error!("[QRMai] 写入配置失败: {e}");
+    }
+    info!("[QRMai] 已删除文件 {target:?}");
+    Json(serde_json::json!({"success": true}))
+}
+
 /// 保存配置 — 接收表单数据，更新到内存并写入 config.json
 #[post("/settings", data = "<form>")]
 async fn save_settings(
@@ -477,7 +621,7 @@ fn version_greater(remote: &str, current: &str) -> bool {
 /// 检查更新：抓取 GitHub 最新 release，与当前版本（编译期 CARGO_PKG_VERSION）比较
 #[post("/check_update")]
 fn check_update() -> Json<serde_json::Value> {
-    const REPO: &str = "SodaCodeSave/QRmai";
+    const REPO: &str = "naroxeno/Re-QRmai";
     const CURRENT: &str = env!("CARGO_PKG_VERSION");
     let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
 
@@ -693,6 +837,10 @@ async fn main() -> Result<(), rocket::Error> {
                 mouse_position,
                 detect_positions,
                 check_update,
+                upload_p1,
+                upload_p2,
+                upload_skin,
+                delete_skin,
                 static_files
             ],
         );
