@@ -3,4 +3,6 @@
 /dist
 /.tools
 /.fonts_tmp
+/.xwin_cache
+/config.toml
 GlowSansSC-*

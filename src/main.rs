@@ -699,7 +699,6 @@ async fn main() -> Result<(), rocket::Error> {
 
     let _rocket = _rocket
         .mount("/img", FileServer::from("img"))
-        .mount("/extension", FileServer::from("extension"))
         .launch()
         .await?;
 

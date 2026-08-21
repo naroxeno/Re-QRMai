@@ -410,7 +410,7 @@ pub fn capture_screen() -> Result<ImageBuffer<image::Luma<f32>, Vec<f32>>> {
     use windows_capture::capture::{Context, GraphicsCaptureApiHandler};
     use windows_capture::frame::Frame;
     use windows_capture::graphics_capture_api::InternalCaptureControl;
-    use windows_capture::graphics_capture_picker::GraphicsCapturePicker;
+    use windows_capture::monitor::Monitor;
     use windows_capture::settings::{
         ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
         MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings,
@@ -458,19 +458,18 @@ pub fn capture_screen() -> Result<ImageBuffer<image::Luma<f32>, Vec<f32>>> {
 
     let png_data: Arc<Mutex<Option<(Vec<u8>, u32, u32)>>> = Arc::new(Mutex::new(None));
 
-    let item = GraphicsCapturePicker::pick_item().context("无法打开捕获选择器")?;
-    let Some(item) = item else {
-        anyhow::bail!("未选择捕获目标");
-    };
-    let (width, height) = item.size().context("无法获取捕获目标尺寸")?;
+    // 自动捕获主显示器（不再弹出系统捕获选择器，避免「未选择捕获目标」）
+    let monitor = Monitor::primary().context("无法获取主显示器")?;
+    let width = monitor.width().context("无法获取显示器宽度")?;
+    let height = monitor.height().context("无法获取显示器高度")?;
 
     let flags = CaptureFlags {
-        size: (width as u32, height as u32),
+        size: (width, height),
         buffer: png_data.clone(),
     };
 
     let settings = Settings::new(
-        item,
+        monitor,
         CursorCaptureSettings::Default,
         DrawBorderSettings::Default,
         SecondaryWindowSettings::Default,
