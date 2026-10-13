@@ -446,8 +446,9 @@ async fn upload_skin(
     // 更新配置：skin_images 追加 + 写回 config.toml
     let mut c = config.write().await;
     c.skin_images.push(name.clone());
-    if let Err(e) = std::fs::write("config.toml", render_config_toml(&c)) {
-        error!("[QRMai] 写入配置失败: {e}");
+    let cfg_path = crate::config::config_path();
+    if let Err(e) = std::fs::write(&cfg_path, render_config_toml(&c)) {
+        error!("[QRMai] 写入配置失败 {cfg_path:?}: {e}");
     }
     info!("[QRMai] 已保存皮肤 → {dest:?}");
     Json(serde_json::json!({"success": true, "filename": name}))
@@ -491,14 +492,15 @@ async fn delete_skin(
     if name == "p2_user.png" {
         c.p2_image = "p2.png".into();
     }
-    if let Err(e) = std::fs::write("config.toml", render_config_toml(&c)) {
-        error!("[QRMai] 写入配置失败: {e}");
+    let cfg_path = crate::config::config_path();
+    if let Err(e) = std::fs::write(&cfg_path, render_config_toml(&c)) {
+        error!("[QRMai] 写入配置失败 {cfg_path:?}: {e}");
     }
     info!("[QRMai] 已删除文件 {target:?}");
     Json(serde_json::json!({"success": true}))
 }
 
-/// 保存配置 — 接收表单数据，更新到内存并写入 config.json
+/// 保存配置 — 接收表单数据，更新到内存并写入 config.toml（路径见 config::config_path）
 #[post("/settings", data = "<form>")]
 async fn save_settings(
     config: &State<SharedConfig>,
@@ -531,7 +533,11 @@ async fn save_settings(
 
     // 写入配置文件（带说明的 TOML，注释常驻）
     let toml_str = render_config_toml(&c);
-    fs::write("config.toml", toml_str).map_err(|_| Status::InternalServerError)?;
+    let cfg_path = crate::config::config_path();
+    fs::write(&cfg_path, toml_str).map_err(|e| {
+        error!("[QRMai] 保存设置失败，写入 {cfg_path:?} 出错: {e}");
+        Status::InternalServerError
+    })?;
 
     Ok(Json(serde_json::json!({"success": true})))
 }
@@ -879,6 +885,73 @@ mod ui_tests {
             .unwrap()
             .render(context! {})
             .expect("login 渲染失败");
+    }
+
+    /// 设置保存的端到端回归测试：走真实的 Rocket 表单解析与私有 cookie 鉴权，
+    /// 断言提交的字段真的落到了配置文件里。
+    ///
+    /// 回归保护：表单字段名曾用 `decode.time`，Rocket 会把含 `.` 的名字拆成
+    /// 嵌套键，处理函数收不到该字段却仍返回 200，表现为「设置保存了但不生效」。
+    #[test]
+    fn save_settings_end_to_end_persists_form_values() {
+        use rocket::http::ContentType as FormContentType;
+        use rocket::local::blocking::Client;
+
+        // 用临时目录里的配置，避免污染工作目录下的 config.toml
+        let dir = std::env::temp_dir().join(format!("qrmai_cfg_e2e_{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("应能创建临时目录");
+        let cfg_path = dir.join("config.toml");
+        let _ = fs::remove_file(&cfg_path);
+
+        let config = load_or_create_config(&cfg_path).expect("应能创建临时配置");
+        let token = config.token.clone();
+        assert_eq!(crate::config::config_path(), cfg_path, "应记录配置路径");
+        let shared: SharedConfig = Arc::new(RwLock::new(config));
+
+        let rocket = rocket::build()
+            .manage(shared)
+            .mount("/", routes![login, save_settings]);
+        let client = Client::tracked(rocket).expect("应能构建测试用 Rocket 实例");
+
+        // 登录以获取私有 cookie
+        let resp = client
+            .post("/login")
+            .header(FormContentType::Form)
+            .body(format!("token={token}"))
+            .dispatch();
+        assert_eq!(resp.status(), Status::Ok, "登录应成功");
+
+        // 保存设置：解码字段使用扁平字段名（与设置页模板一致）
+        let resp = client
+            .post("/settings")
+            .header(FormContentType::Form)
+            .body("decode_time=30&decode_retry=7&cache_duration=9&standalone_mode=on")
+            .dispatch();
+        assert_eq!(resp.status(), Status::Ok, "保存设置应成功");
+
+        let saved: Config =
+            toml::from_str(&fs::read_to_string(&cfg_path).expect("应能读回配置文件"))
+                .expect("写出的配置应可解析");
+        assert_eq!(saved.decode.time, 30, "decode_time 应持久化到配置文件");
+        assert_eq!(saved.decode.retry_count, 7, "decode_retry 应持久化");
+        assert_eq!(saved.cache_duration, 9);
+        assert!(saved.standalone_mode);
+
+        // 未登录时应被拒绝
+        let anon = Client::untracked(
+            rocket::build()
+                .manage(Arc::new(RwLock::new(Config::default())))
+                .mount("/", routes![save_settings]),
+        )
+        .expect("应能构建未登录客户端");
+        let resp = anon
+            .post("/settings")
+            .header(FormContentType::Form)
+            .body("cache_duration=1")
+            .dispatch();
+        assert_eq!(resp.status(), Status::Forbidden, "未登录保存应被拒绝");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// 版本比较：远程 tag 与当前版本

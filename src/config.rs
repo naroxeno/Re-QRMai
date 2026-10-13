@@ -4,10 +4,33 @@ use anyhow::{Context, Result};
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+/// 当前配置文件的路径，由 `load_or_create_config` 在启动时记录。
+///
+/// 各处写回配置（保存设置 / 上传删除皮肤）统一走 [`config_path`]，
+/// 不再硬编码相对路径 `"config.toml"`，避免进程工作目录变化时
+/// 「读的是一个文件、写的是另一个文件」。
+static CONFIG_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+/// 返回本次运行使用的配置文件路径；尚未加载过配置时回退到 `config.toml`。
+pub fn config_path() -> PathBuf {
+    CONFIG_PATH
+        .get()
+        .cloned()
+        .unwrap_or_else(|| PathBuf::from("config.toml"))
+}
+
+/// 记录配置文件路径（仅首次生效）。
+///
+/// `load_or_create_config` 会自动调用；单独调用用于测试等场景。
+pub fn set_config_path(path: impl Into<PathBuf>) {
+    let _ = CONFIG_PATH.set(path.into());
+}
 
 // 子结构体 `decode`
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub struct Decode {
     pub time: u64,
     #[serde(rename = "retry_count")]
@@ -36,7 +59,7 @@ fn default_p2_region_ratio_y() -> f64 {
 }
 
 // 主配置结构体（字段名即 TOML key）
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub struct Config {
     pub p1: [u32; 2],
     pub p2: [u32; 2],
@@ -141,6 +164,16 @@ fn esc(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// 将字符串数组渲染为 TOML 内联数组（元素各自转义）；空数组渲染为 `[]`
+fn esc_string_list(items: &[String]) -> String {
+    let inner = items
+        .iter()
+        .map(|s| format!("\"{}\"", esc(s)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{inner}]")
+}
+
 /// 将配置渲染为带中文说明的 TOML。
 ///
 /// 首次生成默认配置与设置页保存后重写均调用此函数，说明注释常驻，
@@ -196,7 +229,7 @@ auto_detect_p1p2 = {}
 skin_format = "{}"
 skin_mode = "{}"
 skin_index = {}
-skin_images = []
+skin_images = {}
 custom_skin_path = "{}"
 custom_skin_qrcode_size = {}
 custom_skin_qrcode_point = [{}, {}]
@@ -228,6 +261,7 @@ retry_count = {}
         c.p2_region_ratio_x, c.p2_region_ratio_y, c.p2_max_dx, c.p2_max_dy,
         c.template_threshold, c.auto_detect_p1p2,
         esc(&c.skin_format), esc(&c.skin_mode), c.skin_index,
+        esc_string_list(&c.skin_images),
         esc(&c.custom_skin_path), c.custom_skin_qrcode_size,
         c.custom_skin_qrcode_point[0], c.custom_skin_qrcode_point[1],
         c.standalone_mode, c.cache_duration, c.dev_mode, esc(&c.version),
@@ -311,12 +345,16 @@ pub fn apply_settings(c: &mut Config, form: &std::collections::BTreeMap<String, 
                     c.custom_skin_qrcode_point = pt;
                 }
             }
-            "decode.time" => {
+            // 注意：表单字段名不能含 '.'。Rocket 的表单解析按 '.' / '[]' 把字段名
+            // 拆成「嵌套键」，`Form<BTreeMap<String, String>>` 收到的是拆开的
+            // "decode"、"time" 而不是 "decode.time"，配置会被静默丢弃。
+            // 旧名的分支仅为兼容非 Rocket 调用方保留。
+            "decode_time" | "decode.time" => {
                 if let Ok(t) = value.parse() {
                     c.decode.time = t;
                 }
             }
-            "decode.retry_count" => {
+            "decode_retry" | "decode.retry_count" => {
                 if let Ok(rc) = value.parse() {
                     c.decode.retry_count = rc;
                 }
@@ -404,8 +442,12 @@ pub fn generate_random_token() -> String {
 
 /// 加载配置：文件存在则读取（TOML）；不存在则生成带说明的默认 TOML 并写入
 /// （首次创建时 token 自动随机生成，格式 qrmaiXXXXXX）。
+///
+/// 同时把该路径记录为本次运行的配置路径（见 [`config_path`]），
+/// 后续保存设置 / 皮肤管理都写回同一文件。
 pub fn load_or_create_config<P: AsRef<Path>>(path: P) -> Result<Config> {
     let path = path.as_ref();
+    set_config_path(path.to_path_buf());
     if path.exists() {
         let content = fs::read_to_string(path)
             .with_context(|| format!("无法读取配置文件: {path:?}"))?;
@@ -500,7 +542,7 @@ retry_count = 10
         form.insert("port".into(), "8080".into());
         form.insert("p1".into(), "100, 200".into());
         form.insert("p2_region_ratio_x".into(), "0.15".into());
-        form.insert("decode.time".into(), "30".into());
+        form.insert("decode_time".into(), "30".into());
         form.insert("standalone_mode".into(), "on".into());
         form.insert("unknown_key".into(), "ignored".into());
         // 无效值应被忽略，保持原值
@@ -514,6 +556,134 @@ retry_count = 10
         assert_eq!(c.decode.time, 30);
         assert!(c.standalone_mode);
         assert_eq!(c.p2_max_dx, 0, "无效值应保持原值");
+    }
+
+    /// 渲染出的 TOML 必须能无损还原**全部**字段。
+    ///
+    /// 回归保护：`skin_images` 曾被硬编码为 `[]`，导致上传的皮肤在
+    /// 任何一次配置写回（上传/删除/保存设置）后从文件里消失。
+    #[test]
+    fn rendered_toml_roundtrips_all_fields() {
+        let mut c = Config::default();
+        // 除 p1_image / p2_image 外，每个字段都改成与默认值不同的值，
+        // 这样「渲染时写死某个值」也会被断言抓到。
+        c.p1 = [11, 22];
+        c.p2 = [33, 44];
+        c.token = "tok\"en\\x".into();
+        c.host = "127.0.0.1".into();
+        c.port = 5555;
+        c.qr_route = "/qr".into();
+        c.cache_duration = 9;
+        c.standalone_mode = true;
+        c.decode = Decode { time: 3, retry_count: 4 };
+        c.skin_format = "custom".into();
+        c.custom_skin_path = "./s.png".into();
+        c.custom_skin_qrcode_size = 300;
+        c.custom_skin_qrcode_point = [7, 8];
+        c.dev_mode = true;
+        c.version = "v-test".into();
+        c.wechat_bin = "/bin/wechat".into();
+        c.wechat_url_timeout = 12;
+        c.auto_detect_p1p2 = true;
+        c.template_threshold = 0.6;
+        c.p2_region_ratio_x = 0.15;
+        c.p2_region_ratio_y = 0.25;
+        c.p2_max_dx = 600;
+        c.p2_max_dy = 700;
+        c.skin_mode = "fixed".into();
+        c.skin_index = 2;
+        c.skin_images = vec!["a.png".into(), "b\"c\\d.png".into()];
+        c.capture_mode = if c.capture_mode == "hijack" {
+            "extension".into()
+        } else {
+            "hijack".into()
+        };
+
+        let text = render_config_toml(&c);
+        let parsed: Config = toml::from_str(&text).expect("渲染的 TOML 应可解析");
+        assert_eq!(parsed, c, "渲染后再解析应完全等价，实际文件:\n{text}");
+    }
+
+    /// 解码设置必须能从设置页表单持久化到 TOML。
+    ///
+    /// 回归保护：表单字段名曾用 `decode.time` / `decode.retry_count`，
+    /// Rocket 的表单解析会把含 `.` 的名字拆成嵌套键，`BTreeMap` 收到的是
+    /// 拆开的 key，配置被静默丢弃（接口仍返回 200）。
+    #[test]
+    fn apply_settings_persists_decode_fields() {
+        use std::collections::BTreeMap;
+
+        let mut c = Config::default();
+        let mut form = BTreeMap::new();
+        form.insert("decode_time".into(), "30".into());
+        form.insert("decode_retry".into(), "7".into());
+        apply_settings(&mut c, &form);
+        assert_eq!(c.decode.time, 30);
+        assert_eq!(c.decode.retry_count, 7);
+
+        // 写回 TOML 后依然保留
+        let parsed: Config = toml::from_str(&render_config_toml(&c)).unwrap();
+        assert_eq!(parsed.decode.time, 30);
+        assert_eq!(parsed.decode.retry_count, 7);
+
+        // 旧的点号字段名对非 Rocket 调用方仍兼容
+        let mut c2 = Config::default();
+        let mut legacy = BTreeMap::new();
+        legacy.insert("decode.time".into(), "42".into());
+        legacy.insert("decode.retry_count".into(), "43".into());
+        apply_settings(&mut c2, &legacy);
+        assert_eq!(c2.decode.time, 42);
+        assert_eq!(c2.decode.retry_count, 43);
+    }
+
+    /// 设置页静态表单字段名不得含 `.`（否则 Rocket 会拆成嵌套键而丢配置）。
+    ///
+    /// 同时保证模板里出现的每个字段名都被 apply_settings 处理：
+    /// 若设置页新增字段而忘了加 match 分支，本测试会失败。
+    #[test]
+    fn settings_template_field_names_are_flat_and_handled() {
+        /// 每个表单字段的合法测试值（新增字段时必须在此登记）
+        fn sentinel_for(name: &str) -> Option<&'static str> {
+            Some(match name {
+                "token" | "host" | "qr_route" | "capture_mode" | "wechat_bin"
+                | "skin_format" | "custom_skin_path" | "skin_mode" => "sentinel",
+                "port" | "cache_duration" | "wechat_url_timeout" | "p2_region_ratio_x"
+                | "p2_region_ratio_y" | "p2_max_dx" | "p2_max_dy" | "decode_time"
+                | "decode_retry" | "custom_skin_qrcode_size" | "skin_index" => "77",
+                "p1" | "p2" | "custom_skin_qrcode_point" => "88,99",
+                "standalone_mode" => "on",
+                _ => return None,
+            })
+        }
+
+        let html = include_str!("../templates/settings.html");
+        let re = regex::Regex::new(r#"<(?:input|select|textarea)\b[^>]*?\bname="([^"]+)""#)
+            .expect("正则应可编译");
+        let mut names: Vec<String> = re
+            .captures_iter(html)
+            .map(|cap| cap[1].to_string())
+            .collect();
+        names.sort();
+        names.dedup();
+
+        assert!(!names.is_empty(), "应能从设置页模板提取到表单字段名");
+
+        for name in &names {
+            assert!(!name.contains('.'), "表单字段名不能含 '.': {name}");
+
+            let sentinel = sentinel_for(name).unwrap_or_else(|| {
+                panic!("设置页字段 `{name}` 没有测试值：请同时确认 apply_settings 已处理该字段")
+            });
+            let mut c = Config::default();
+            let mut form = std::collections::BTreeMap::new();
+            form.insert(name.clone(), sentinel.into());
+            apply_settings(&mut c, &form);
+            assert_ne!(
+                render_config_toml(&c),
+                render_config_toml(&Config::default()),
+                "设置页字段 `{name}` 未被 apply_settings 处理（提交后会被静默丢弃）"
+            );
+        }
     }
 
     /// 表单缺失 standalone_mode 字段 = 开关关闭
