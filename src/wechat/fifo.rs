@@ -13,6 +13,11 @@ use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Duration;
 
+/// 把路径安全地塞进 bash 单引号串（路径含 `'` 也不会逃逸出引号）
+fn sh_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 /// 生成伪装的 `xdg-open`：MAID 链接写入 FIFO，其余转发系统 xdg-open
 pub fn create_fake_xdg_open(fake_bin_dir: &Path, fifo_path: &Path) -> Result<()> {
     fs::create_dir_all(fake_bin_dir)
@@ -23,14 +28,15 @@ pub fn create_fake_xdg_open(fake_bin_dir: &Path, fifo_path: &Path) -> Result<()>
         r#"#!/bin/bash
 URL="$1"
 if [[ "$URL" =~ ^https?://wq\.wahlap\.net/qrcode/req/MAID[0-9A-Fa-f]+\.html ]]; then
-    echo "$URL" > "{}"
+    echo "$URL" > {}
     exit 0
 else
     unset BROWSER
     exec /usr/bin/xdg-open "$@"
 fi
 "#,
-        fifo_path.display()
+        // 安全审计 S-24：原来是把路径直接插进双引号里，路径含特殊字符时会破坏脚本
+        sh_single_quote(&fifo_path.display().to_string())
     );
 
     fs::write(&xdg_open, script)
@@ -75,7 +81,7 @@ pub fn spawn_fifo_listener(
                 if let Ok(url) = line {
                     let url = url.trim().to_string();
                     if !url.is_empty() {
-                        info!("[Wechat] 截获链接: {url}");
+                        info!("[Wechat] 截获链接: {}", crate::util::mask_url(&url));
                         let _ = tx.send(url);
                     }
                 }

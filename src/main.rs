@@ -1,18 +1,19 @@
 use anyhow::Result;
-use log::{error, info};
+use log::{error, info, warn};
 use minijinja::{context, Environment};
 use crate::config::{Config, load_or_create_config, render_config_toml};
 use crate::mouse::MouseController;
+use crate::util::{ct_eq, mask_payload};
 use crate::wechat::{fetch_and_decode, WechatHijack};
 use rocket::fs::TempFile;
 use rocket::form::{Form, FromForm};
 use rocket::fs::FileServer;
-use rocket::http::{Cookie, CookieJar, ContentType, Status};
+use rocket::http::{Cookie, CookieJar, ContentType, SameSite, Status};
 use rocket::response::content::RawHtml;
 use rocket::response::Redirect;
 use rocket::serde::json::Json;
 use rocket::State;
-use rocket::tokio::sync::RwLock;
+use rocket::tokio::sync::{RwLock, Semaphore};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::fs;
@@ -30,6 +31,7 @@ extern crate rocket;
 mod config;
 mod detect;
 mod mouse;
+mod util;
 mod wechat;
 
 // 配置模型（Config/Decode/加载函数）已拆分到 src/config.rs，见 qrmai_rs::config
@@ -81,6 +83,60 @@ pub type SharedConfig = Arc<RwLock<Config>>;
 /// QR 码缓存：扩展模式下暂存最新解码结果
 pub type QrCache = Arc<RwLock<Option<(String, std::time::Instant)>>>;
 pub struct HijackState(pub Option<Arc<std::sync::Mutex<WechatHijack>>>);
+
+/// 取码接口的并发闸：同一时间只放行一个取码流程。
+///
+/// 安全审计 S-18：`/qrmai` 会真正操作鼠标并在阻塞线程里等 FIFO/缓存，
+/// 无限制并发会把 tokio 阻塞线程池与劫持互斥锁排满。
+pub struct RequestGate(pub Arc<Semaphore>);
+
+/// 登录失败限流状态（进程内，登录成功即清零）
+#[derive(Default)]
+struct ThrottleState {
+    failures: u32,
+    locked_until: Option<std::time::Instant>,
+}
+
+/// 登录限流器：连续失败 5 次后锁定，时长按失败次数翻倍，上限 5 分钟。
+///
+/// 安全审计 S-16：原本 `/login` 没有任何速率限制，可无限次爆破。
+pub struct LoginThrottle(std::sync::Mutex<ThrottleState>);
+
+impl LoginThrottle {
+    pub fn new() -> Self {
+        Self(std::sync::Mutex::new(ThrottleState::default()))
+    }
+
+    /// 锁定时返回还需等待的秒数（0 = 可以尝试）
+    fn locked_secs(&self) -> u64 {
+        let st = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        match st.locked_until {
+            Some(t) if t > std::time::Instant::now() => {
+                t.duration_since(std::time::Instant::now()).as_secs() + 1
+            }
+            _ => 0,
+        }
+    }
+
+    /// 记录一次失败；若触发锁定则返回锁定时长（秒），否则返回 0
+    fn record_failure(&self) -> u64 {
+        let mut st = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        st.failures = st.failures.saturating_add(1);
+        if st.failures < 5 {
+            return 0;
+        }
+        // 30s → 60s → 120s → 240s → 上限 300s
+        let steps = (st.failures - 5).min(4);
+        let secs = (30u64 << steps).min(300);
+        st.locked_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(secs));
+        secs
+    }
+
+    fn reset(&self) {
+        let mut st = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        *st = ThrottleState::default();
+    }
+}
 
 /// 首页 / 登录页（静态编译）
 #[get("/")]
@@ -138,48 +194,88 @@ async fn settings_page(
     env: &State<Environment<'static>>,
 ) -> Result<RawHtml<String>, Redirect> {
     let c = config.read().await;
-    let is_auth = cookies
-        .get_private("auth_token")
-        .map(|cookie| cookie.value() == c.token)
-        .unwrap_or(false);
-
-    if !is_auth {
+    if !is_auth(cookies, &c.token) {
         return Err(Redirect::to("/login"));
     }
 
-    let tmpl = env.get_template("settings").expect("设置页模板未注册");
-    let html = tmpl
-        .render(context! {
-            config => &*c,
-            is_linux => cfg!(target_os = "linux"),
-        })
-        .expect("Failed to render settings template");
+    // 不再对模板缺失/渲染失败 panic：release 下 panic = "abort" 会终止整个服务
+    let tmpl = match env.get_template("settings") {
+        Ok(t) => t,
+        Err(e) => {
+            error!("[QRMai] 设置页模板缺失: {e}");
+            return Err(Redirect::to("/login"));
+        }
+    };
+    let html = match tmpl.render(context! {
+        config => &*c,
+        is_linux => cfg!(target_os = "linux"),
+    }) {
+        Ok(h) => h,
+        Err(e) => {
+            error!("[QRMai] 设置页渲染失败: {e}");
+            return Err(Redirect::to("/login"));
+        }
+    };
     Ok(RawHtml(html))
 }
 
 /// 获取当前光标坐标（settings 页面「自动识别位置」功能用）
 #[get("/mouse_position")]
-fn mouse_position() -> Json<serde_json::Value> {
+async fn mouse_position(
+    config: &State<SharedConfig>,
+    cookies: &CookieJar<'_>,
+) -> Result<Json<serde_json::Value>, Status> {
+    // 安全审计 B3：原本未鉴权，任何人可读取实时光标位置
+    if !is_auth_cfg(config, cookies).await {
+        return Err(Status::Forbidden);
+    }
+
     let mc = MouseController::new();
-    match mc {
+    Ok(match mc {
         Ok(mc) => match mc.position() {
             Some((x, y)) => Json(serde_json::json!({"x": x, "y": y})),
             None => Json(serde_json::json!({"error": "无法读取光标位置，请安装 hyprctl 或 xdotool"})),
         },
         Err(e) => Json(serde_json::json!({"error": e.to_string()})),
-    }
+    })
 }
 
 /// QR 二维码获取路由 — 绑定到 config.qr_route（默认 /qrmai）
 ///
+/// **必须携带 `?token=<访问令牌>`**（安全审计 S-04）：该接口会真的操作鼠标，
+/// 并把新鲜的微信登录二维码原样返回，因此不能再让任何人访问。
+/// 设备侧访问地址形如 `http://<域名>:<端口><qr_route>?token=<token>`。
+///
 /// 劫持模式：点击 P1 → P2 → FIFO 拦截 URL → 解码 → 返回 PNG
 /// 扩展模式：点击 P1 → P2 → 轮询浏览器扩展提交的缓存 → 返回 PNG
-#[get("/")]
+#[get("/?<token>")]
 async fn qrmai_handler(
     config: &State<SharedConfig>,
     hijack_state: &State<HijackState>,
     qr_cache: &State<QrCache>,
+    gate: &State<RequestGate>,
+    token: Option<String>,
 ) -> Result<(ContentType, Vec<u8>), Status> {
+    // 取码鉴权：常量时间比较，避免时序侧信道
+    {
+        let c = config.read().await;
+        let ok = token.as_deref().map(|t| ct_eq(t, &c.token)).unwrap_or(false);
+        if !ok {
+            // 用 warn 而不是 error：接口可能暴露在公网，未授权探测可能刷屏
+            warn!("[QRMai] 拒绝未携带有效 token 的取码请求");
+            return Err(Status::Forbidden);
+        }
+    }
+
+    // 并发闸：同一时刻只允许一个取码流程，抢不到直接 429（S-18）
+    let _permit = match gate.0.clone().try_acquire_owned() {
+        Ok(p) => p,
+        Err(_) => {
+            info!("[QRMai] 已有取码请求正在进行，拒绝并发请求");
+            return Err(Status::TooManyRequests);
+        }
+    };
+
     let (capture_mode, p1, p2, timeout) = {
         let c = config.read().await;
         (c.capture_mode.clone(), c.p1, c.p2, c.wechat_url_timeout)
@@ -226,7 +322,7 @@ async fn qrmai_handler(
             {
                 let cache = qr_cache.read().await;
                 if let Some((ref data, _)) = *cache {
-                    info!("[QRMai] 从扩展缓存获取二维码: {}...", &data[..data.len().min(50)]);
+                    info!("[QRMai] 从扩展缓存获取二维码: {}", mask_payload(data));
                     return qr_png_response(data);
                 }
             }
@@ -260,11 +356,11 @@ async fn qrmai_handler(
 
     match result {
         Ok(qr_data) => {
-            info!("[QRMai] 二维码获取成功: {}...", &qr_data[..qr_data.len().min(50)]);
+            info!("[QRMai] 二维码获取成功: {}", mask_payload(&qr_data));
             qr_png_response(&qr_data)
         }
         Err(e) => {
-            error!("[QRMai] 二维码获取失败: {e}");
+            error!("[QRMai] 二维码获取失败: {}", crate::util::mask_url(&e.to_string()));
             Err(Status::InternalServerError)
         }
     }
@@ -282,7 +378,15 @@ fn qr_png_response(data: &str) -> Result<(ContentType, Vec<u8>), Status> {
 
 /// 自动识别 P1/P2 位置（GPU 加速模板匹配）
 #[post("/detect_positions")]
-async fn detect_positions(config: &State<SharedConfig>) -> Json<serde_json::Value> {
+async fn detect_positions(
+    config: &State<SharedConfig>,
+    cookies: &CookieJar<'_>,
+) -> Result<Json<serde_json::Value>, Status> {
+    // 安全审计 S-05：原本未鉴权，任何人可触发全屏截图 + GPU 模板匹配
+    if !is_auth_cfg(config, cookies).await {
+        return Err(Status::Forbidden);
+    }
+
     let (threshold, ratio_x, ratio_y, manual_dx, manual_dy) = {
         let c = config.read().await;
         (
@@ -325,12 +429,12 @@ async fn detect_positions(config: &State<SharedConfig>) -> Json<serde_json::Valu
                 if p1.is_none() && p2.is_none() {
                     resp["error"] = serde_json::json!("未找到 P1 或 P2 模板，请上传模板图片到 img/ 目录");
                 }
-                Json(resp)
+                Ok(Json(resp))
             }
-            Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+            Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
             }
         }
-        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+        Err(e) => Ok(Json(serde_json::json!({"error": e.to_string()}))),
     }
 }
 
@@ -338,14 +442,47 @@ async fn detect_positions(config: &State<SharedConfig>) -> Json<serde_json::Valu
 async fn login(
     config: &State<SharedConfig>,
     cookies: &CookieJar<'_>,
+    throttle: &State<LoginThrottle>,
     form: Form<LoginForm>,
 ) -> Json<serde_json::Value> {
-    let token = config.read().await.token.clone();
-    let success = form.token == token;
-    if success {
-        cookies.add_private(Cookie::new("auth_token", form.into_inner().token));
+    // 安全审计 S-16：失败限流，避免无限次爆破
+    let wait = throttle.locked_secs();
+    if wait > 0 {
+        return Json(serde_json::json!({
+            "success": false,
+            "message": format!("尝试过于频繁，请 {wait} 秒后再试"),
+        }));
     }
-    Json(serde_json::json!({"success": success}))
+
+    let token = config.read().await.token.clone();
+    let form = form.into_inner();
+
+    // 安全审计 S-15：常量时间比较，避免用响应时间逐位猜 token
+    if ct_eq(&form.token, &token) {
+        throttle.reset();
+        cookies.add_private(
+            Cookie::build(("auth_token", form.token))
+                // 安全审计 S-17：显式限定 HttpOnly + SameSite=Lax；
+                // Lax 同时兜住「状态变更接口没有 CSRF token」的跨站表单提交（S-20）
+                .http_only(true)
+                .same_site(SameSite::Lax)
+                .build(),
+        );
+        info!("[QRMai] 管理面板登录成功");
+        Json(serde_json::json!({"success": true}))
+    } else {
+        let locked = throttle.record_failure();
+        // 固定延迟，进一步压低爆破速率
+        rocket::tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        Json(serde_json::json!({
+            "success": false,
+            "message": if locked > 0 {
+                format!("令牌错误，已锁定 {locked} 秒")
+            } else {
+                "令牌错误".to_string()
+            },
+        }))
+    }
 }
 
 /// 登出：清除认证 cookie 并跳转登录页
@@ -355,12 +492,18 @@ fn logout(cookies: &CookieJar<'_>) -> Redirect {
     Redirect::to("/login")
 }
 
-/// 鉴权辅助：private cookie 是否匹配配置 token
+/// 鉴权辅助：private cookie 是否匹配配置 token（常量时间比较，见 util::ct_eq）
 fn is_auth(cookies: &CookieJar<'_>, token: &str) -> bool {
     cookies
         .get_private("auth_token")
-        .map(|c| c.value() == token)
+        .map(|c| ct_eq(c.value(), token))
         .unwrap_or(false)
+}
+
+/// 鉴权辅助（需要读配置中的 token）：安全审计 A3/S-15
+async fn is_auth_cfg(config: &State<SharedConfig>, cookies: &CookieJar<'_>) -> bool {
+    let token = config.read().await.token.clone();
+    is_auth(cookies, &token)
 }
 
 // ── 模板 / 皮肤上传与删除（multipart） ─────────────────
@@ -371,6 +514,29 @@ struct Upload<'r> {
     file: TempFile<'r>,
 }
 
+/// 上传文件大小上限（Rocket 默认还会再限到 1 MiB）
+const MAX_UPLOAD_BYTES: usize = 4 * 1024 * 1024;
+
+/// 读取上传数据并确认它真的是一张图片（安全审计 S-22）。
+///
+/// 原来直接 `fs::copy` 到 img/，任意内容都能落盘并由 `/img/*.png` 回吐；
+/// 现在用魔数嗅探校验，非图片一律拒收。
+fn read_uploaded_image(file: TempFile<'_>) -> Result<Vec<u8>, String> {
+    let Some(src) = file.path() else {
+        return Err("未接收到文件数据".into());
+    };
+    let bytes = std::fs::read(src).map_err(|e| format!("读取上传数据失败: {e}"))?;
+    if bytes.is_empty() {
+        return Err("上传文件为空".into());
+    }
+    if bytes.len() > MAX_UPLOAD_BYTES {
+        return Err(format!("文件过大（上限 {} KB）", MAX_UPLOAD_BYTES / 1024));
+    }
+    image::guess_format(&bytes)
+        .map_err(|_| "文件不是可识别的图片（本项目仅编译了 PNG 支持）".to_string())?;
+    Ok(bytes)
+}
+
 /// 校验鉴权并保存上传文件到 dest
 async fn save_upload(
     config: &State<SharedConfig>,
@@ -378,20 +544,18 @@ async fn save_upload(
     upload: Form<Upload<'_>>,
     dest: &str,
 ) -> Json<serde_json::Value> {
-    let token = config.read().await.token.clone();
-    if !is_auth(cookies, &token) {
+    if !is_auth_cfg(config, cookies).await {
         return Json(serde_json::json!({"error": "未授权，请重新登录"}));
     }
-    let file = upload.into_inner().file;
-    match file.path() {
-        Some(src) => match std::fs::copy(src, dest) {
+    match read_uploaded_image(upload.into_inner().file) {
+        Ok(bytes) => match std::fs::write(dest, &bytes) {
             Ok(_) => {
                 info!("[QRMai] 已保存上传文件 → {dest}");
                 Json(serde_json::json!({"success": true}))
             }
             Err(e) => Json(serde_json::json!({"error": format!("保存失败: {e}")})),
         },
-        None => Json(serde_json::json!({"error": "未接收到文件数据"})),
+        Err(e) => Json(serde_json::json!({"error": e})),
     }
 }
 
@@ -422,24 +586,22 @@ async fn upload_skin(
     cookies: &CookieJar<'_>,
     upload: Form<Upload<'_>>,
 ) -> Json<serde_json::Value> {
-    let token = config.read().await.token.clone();
-    if !is_auth(cookies, &token) {
+    if !is_auth_cfg(config, cookies).await {
         return Json(serde_json::json!({"error": "未授权，请重新登录"}));
     }
-    let file = upload.into_inner().file;
-    let Some(src) = file.path() else {
-        return Json(serde_json::json!({"error": "未接收到文件数据"}));
+    let bytes = match read_uploaded_image(upload.into_inner().file) {
+        Ok(b) => b,
+        Err(e) => return Json(serde_json::json!({"error": e})),
     };
 
-    let name = format!(
-        "skin_{}.png",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0)
-    );
+    // 文件名加随机后缀：原来只用 unix 秒，同一秒内多次上传会互相覆盖（S-23）
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let name = format!("skin_{secs}_{}.png", &crate::util::random_suffix()[..8]);
     let dest = Path::new("img").join(&name);
-    if let Err(e) = std::fs::copy(src, &dest) {
+    if let Err(e) = std::fs::write(&dest, &bytes) {
         return Json(serde_json::json!({"error": format!("保存失败: {e}")}));
     }
 
@@ -466,8 +628,7 @@ async fn delete_skin(
     cookies: &CookieJar<'_>,
     body: Json<DeleteSkinPayload>,
 ) -> Json<serde_json::Value> {
-    let token = config.read().await.token.clone();
-    if !is_auth(cookies, &token) {
+    if !is_auth_cfg(config, cookies).await {
         return Json(serde_json::json!({"error": "未授权，请重新登录"}));
     }
 
@@ -476,6 +637,18 @@ async fn delete_skin(
         Some(n) => n.to_string(),
         None => return Json(serde_json::json!({"error": "非法文件名"})),
     };
+
+    // 更新配置：皮肤列表移除；删除用户模板时回退到开发者默认模板
+    let mut c = config.write().await;
+
+    // 安全审计 S-24：只允许删除「配置里登记过的皮肤」或用户上传的模板，
+    // 否则 img/ 下的内置模板、README 等任意文件都能被删掉
+    let is_uploaded_skin = c.skin_images.iter().any(|s| s == &name);
+    let is_user_template = name == "p1_user.png" || name == "p2_user.png";
+    if !is_uploaded_skin && !is_user_template {
+        return Json(serde_json::json!({"error": "只能删除自己上传的模板或皮肤"}));
+    }
+
     let target = Path::new("img").join(&name);
     if target.exists() {
         if let Err(e) = std::fs::remove_file(&target) {
@@ -483,8 +656,6 @@ async fn delete_skin(
         }
     }
 
-    // 更新配置：皮肤列表移除；删除用户模板时回退到开发者默认模板
-    let mut c = config.write().await;
     c.skin_images.retain(|s| s != &name);
     if name == "p1_user.png" {
         c.p1_image = "p1.png".into();
@@ -507,16 +678,9 @@ async fn save_settings(
     cookies: &CookieJar<'_>,
     form: Form<BTreeMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, Status> {
-    // 鉴权
-    {
-        let c = config.read().await;
-        let is_auth = cookies
-            .get_private("auth_token")
-            .map(|cookie| cookie.value() == c.token)
-            .unwrap_or(false);
-        if !is_auth {
-            return Err(Status::Forbidden);
-        }
+    // 鉴权（常量时间比较，见 util::ct_eq）
+    if !is_auth_cfg(config, cookies).await {
+        return Err(Status::Forbidden);
     }
 
     let form = form.into_inner();
@@ -551,10 +715,10 @@ async fn qrmai_url_handler(
     qr_cache: &State<QrCache>,
     body: Json<QrUrlPayload>,
 ) -> Result<(ContentType, Vec<u8>), Status> {
-    // Token 验证
+    // Token 验证（常量时间比较）
     {
         let c = config.read().await;
-        if body.token != c.token {
+        if !ct_eq(&body.token, &c.token) {
             return Err(Status::Forbidden);
         }
     }
@@ -568,11 +732,12 @@ async fn qrmai_url_handler(
     .await
     .map_err(|_| Status::InternalServerError)?
     .map_err(|e| {
-        error!("[QRMai] 扩展提交的链接解码失败: {e}");
+        // 错误文本里可能带完整 URL，先脱敏再落日志
+        error!("[QRMai] 扩展提交的链接解码失败: {}", crate::util::mask_url(&e.to_string()));
         Status::InternalServerError
     })?;
 
-    info!("[QRMai] 扩展提交的链接解码成功: {}...", &qr_data[..qr_data.len().min(50)]);
+    info!("[QRMai] 扩展提交的链接解码成功: {}", mask_payload(&qr_data));
 
     // 写入 QR 缓存（供 GET /qrmai 扩展模式读取）
     {
@@ -626,12 +791,20 @@ fn version_greater(remote: &str, current: &str) -> bool {
 
 /// 检查更新：抓取 GitHub 最新 release，与当前版本（编译期 CARGO_PKG_VERSION）比较
 #[post("/check_update")]
-fn check_update() -> Json<serde_json::Value> {
+async fn check_update(
+    config: &State<SharedConfig>,
+    cookies: &CookieJar<'_>,
+) -> Result<Json<serde_json::Value>, Status> {
+    // 安全审计 S-22：原本未鉴权即可让服务端对外发起请求（域名固定，影响较小）
+    if !is_auth_cfg(config, cookies).await {
+        return Err(Status::Forbidden);
+    }
+
     const REPO: &str = "naroxeno/Re-QRmai";
     const CURRENT: &str = env!("CARGO_PKG_VERSION");
     let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
 
-    match ureq::get(&url)
+    Ok(match ureq::get(&url)
         .header("User-Agent", "Re-QRMai")
         .header("Accept", "application/vnd.github+json")
         .call()
@@ -676,7 +849,7 @@ fn check_update() -> Json<serde_json::Value> {
             "error": true,
             "message": format!("检查更新失败: {e}"),
         })),
-    }
+    })
 }
 
 // ── 数据结构 ──────────────────────────────────────────────
@@ -755,9 +928,52 @@ fn file_format(
     )
 }
 
+/// 收紧 log/ 目录与历史日志的权限（安全审计 S-11：日志里可能含链接/二维码）
+fn harden_log_dir() {
+    let dir = Path::new("log");
+    if let Err(e) = fs::create_dir_all(dir) {
+        eprintln!("创建 log/ 目录失败: {e}");
+        return;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // 目录 0700：其他本机用户无法进入，也就读不到里面的日志
+        let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o700));
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                if entry.path().extension().is_some_and(|e| e == "log") {
+                    let _ = fs::set_permissions(entry.path(), fs::Permissions::from_mode(0o600));
+                }
+            }
+        }
+    }
+}
+
+/// 预创建当天日志文件并设为 0600。
+///
+/// flexi_logger 打开已存在的文件时不会改权限，所以先以 0600 建好、之后它只会追加；
+/// 否则新日志会按进程 umask（通常 022 → 0644）创建，其他本机用户能直接读（S-11）。
+fn precreate_log_file(basename: &str) {
+    let path = Path::new("log").join(format!("{basename}.log"));
+    if let Err(e) = fs::OpenOptions::new().create(true).append(true).open(&path) {
+        eprintln!("预创建日志文件失败: {e}");
+        return;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) = fs::set_permissions(&path, fs::Permissions::from_mode(0o600)) {
+            eprintln!("设置日志文件权限失败: {e}");
+        }
+    }
+}
+
 /// 初始化 flexi_logger：彩色终端输出 + 写入 log/ 目录
 fn init_logger() {
+    harden_log_dir();
     let basename = log_basename();
+    precreate_log_file(&basename);
     let file_spec = flexi_logger::FileSpec::default()
         .directory("log")
         .basename(&basename)
@@ -815,6 +1031,10 @@ async fn main() -> Result<(), rocket::Error> {
 
     // ── 预编译设置页模板（只初始化一次，请求时复用，避免每次重新编译） ──
     let mut template_env = Environment::new();
+    // 安全审计 S-13：minijinja 的默认自动转义回调只对以 .html/.htm/.xml 结尾的
+    // 模板名生效，而这里注册的名字是 "settings"（无扩展名）→ 默认回调返回
+    // AutoEscape::None，模板插值原样输出（存储型 XSS）。显式开启 HTML 转义。
+    template_env.set_auto_escape_callback(|_| minijinja::AutoEscape::Html);
     template_env
         .add_template("settings", include_str!("../templates/settings.html"))
         .expect("Failed to compile settings template");
@@ -830,6 +1050,8 @@ async fn main() -> Result<(), rocket::Error> {
         .manage(qr_cache)
         .manage(hijack_state)
         .manage(template_env)
+        .manage(LoginThrottle::new())
+        .manage(RequestGate(Arc::new(Semaphore::new(1))))
         .mount(&qr_route, routes![qrmai_handler, qrmai_url_handler])
         .mount(
             "/",
@@ -910,6 +1132,7 @@ mod ui_tests {
 
         let rocket = rocket::build()
             .manage(shared)
+            .manage(LoginThrottle::new())
             .mount("/", routes![login, save_settings]);
         let client = Client::tracked(rocket).expect("应能构建测试用 Rocket 实例");
 
@@ -952,6 +1175,83 @@ mod ui_tests {
         assert_eq!(resp.status(), Status::Forbidden, "未登录保存应被拒绝");
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 取码接口必须带 `?token=`（安全审计 S-04 回归保护）。
+    ///
+    /// 只测未授权路径：带对 token 会真的开始模拟鼠标点击。
+    #[test]
+    fn qrmai_route_requires_token() {
+        use rocket::local::blocking::Client;
+
+        let shared: SharedConfig = Arc::new(RwLock::new(Config::default()));
+        let qr_cache: QrCache = Arc::new(RwLock::new(None));
+        let rocket = rocket::build()
+            .manage(shared)
+            .manage(qr_cache)
+            .manage(HijackState(None))
+            .manage(RequestGate(Arc::new(Semaphore::new(1))))
+            .mount("/qrmai", routes![qrmai_handler]);
+        let client = Client::untracked(rocket).expect("应能构建测试用 Rocket 实例");
+
+        assert_eq!(
+            client.get("/qrmai").dispatch().status(),
+            Status::Forbidden,
+            "不带 token 的取码请求必须被拒绝"
+        );
+        assert_eq!(
+            client.get("/qrmai?token=wrong").dispatch().status(),
+            Status::Forbidden,
+            "token 不匹配的取码请求必须被拒绝"
+        );
+    }
+
+    /// 其余控制类接口未登录时必须被拒绝（安全审计 S-05 / B3 / S-22 回归保护）。
+    ///
+    /// 关键点：鉴权必须发生在任何实际动作（全屏截图、模板匹配、出网请求）之前。
+    #[test]
+    fn unauthenticated_control_endpoints_are_forbidden() {
+        use rocket::local::blocking::Client;
+
+        let shared: SharedConfig = Arc::new(RwLock::new(Config::default()));
+        let rocket = rocket::build()
+            .manage(shared)
+            .mount("/", routes![mouse_position, detect_positions, check_update]);
+        let client = Client::untracked(rocket).expect("应能构建测试用 Rocket 实例");
+
+        assert_eq!(
+            client.get("/mouse_position").dispatch().status(),
+            Status::Forbidden,
+            "GET /mouse_position 未登录应被拒绝"
+        );
+        assert_eq!(
+            client.post("/detect_positions").dispatch().status(),
+            Status::Forbidden,
+            "POST /detect_positions 未登录应被拒绝"
+        );
+        assert_eq!(
+            client.post("/check_update").dispatch().status(),
+            Status::Forbidden,
+            "POST /check_update 未登录应被拒绝"
+        );
+    }
+
+    /// 登录限流：连续失败达阈值后进入锁定，成功则清零
+    #[test]
+    fn login_throttle_locks_after_failures() {
+        let t = LoginThrottle::new();
+        assert_eq!(t.locked_secs(), 0);
+
+        for _ in 0..4 {
+            assert_eq!(t.record_failure(), 0, "前 4 次失败不锁定");
+        }
+        assert_eq!(t.locked_secs(), 0, "第 4 次失败后仍可尝试");
+
+        assert_eq!(t.record_failure(), 30, "第 5 次失败应触发 30s 锁定");
+        assert!(t.locked_secs() > 0, "锁定后应返回剩余等待秒数");
+
+        t.reset();
+        assert_eq!(t.locked_secs(), 0, "成功后应清零");
     }
 
     /// 版本比较：远程 tag 与当前版本

@@ -124,8 +124,10 @@ impl Default for Config {
         Self {
             p1: [1892, 1407],
             p2: [1453, 1300],
-            token: "qrmai".into(),
-            host: "0.0.0.0".into(),
+            token: DEFAULT_WEAK_TOKEN.into(),
+            // 安全审计 S-02：默认只监听本机，避免新装用户把管理面板暴露到整个局域网。
+            // 需要局域网/穿透访问的用户请在 config.toml 里显式改成 0.0.0.0。
+            host: "127.0.0.1".into(),
             port: 5000,
             qr_route: "/qrmai".into(),
             cache_duration: 0,
@@ -440,6 +442,27 @@ pub fn generate_random_token() -> String {
     token
 }
 
+/// 历史遗留的公开弱默认令牌。
+///
+/// 扩展与旧配置都默认用它，本次安全修复**按用户要求保持该默认值不变**，
+/// 但启动时会就此发出警告（安全审计 S-01）。
+pub const DEFAULT_WEAK_TOKEN: &str = "qrmai";
+
+/// 把配置文件权限收紧到 0600（仅属主可读写）。
+///
+/// 安全审计 S-11：配置里有管理员 token，原来默认 0644，本机任何用户都能读到。
+fn harden_config_file(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) = fs::set_permissions(path, fs::Permissions::from_mode(0o600)) {
+            log::warn!("[Config] 无法收紧配置文件权限 {path:?}: {e}");
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
 /// 加载配置：文件存在则读取（TOML）；不存在则生成带说明的默认 TOML 并写入
 /// （首次创建时 token 自动随机生成，格式 qrmaiXXXXXX）。
 ///
@@ -448,20 +471,30 @@ pub fn generate_random_token() -> String {
 pub fn load_or_create_config<P: AsRef<Path>>(path: P) -> Result<Config> {
     let path = path.as_ref();
     set_config_path(path.to_path_buf());
-    if path.exists() {
+    let config = if path.exists() {
         let content = fs::read_to_string(path)
             .with_context(|| format!("无法读取配置文件: {path:?}"))?;
-        let config: Config = toml::from_str(&content)
-            .with_context(|| format!("解析 TOML 失败: {path:?}"))?;
-        Ok(config)
+        toml::from_str(&content)
+            .with_context(|| format!("解析 TOML 失败: {path:?}"))?
     } else {
         let mut config = Config::default();
         config.token = generate_random_token();
         fs::write(path, render_config_toml(&config))
             .with_context(|| format!("写入默认配置文件失败: {path:?}"))?;
         info!("已创建默认配置文件: {path:?}（token 已随机生成）");
-        Ok(config)
+        config
+    };
+
+    harden_config_file(path);
+
+    if config.token == DEFAULT_WEAK_TOKEN {
+        log::warn!(
+            "[Config] 访问令牌仍是公开的弱默认值 `{DEFAULT_WEAK_TOKEN}`：\
+             服务暴露到局域网/公网时，任何人都能用它登录管理面板（可改 wechat_bin 执行程序）"
+        );
     }
+
+    Ok(config)
 }
 
 #[cfg(test)]

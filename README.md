@@ -12,7 +12,7 @@
 
 ## ✨ 特性
 
-- **一键获取二维码**：打开浏览器访问 `/qrmai`，服务端自动模拟鼠标点击微信窗口，抓取二维码并直接显示在网页上。
+- **一键获取二维码**：打开浏览器访问 `/qrmai?token=<你的令牌>`，服务端自动模拟鼠标点击微信窗口，抓取二维码并直接显示在网页上。
 - **两种捕获模式**：
   - **劫持模式（Linux 专属）**：通过伪装 `xdg-open` 截获微信打开的 MAID 链接，无需安装任何扩展。
   - **扩展模式（跨平台，Windows / macOS / Linux）**：配合浏览器扩展拦截链接（请求级取消，不加载页面），全平台通用。
@@ -76,7 +76,7 @@
 | `token` | 随机生成 | 管理面板登录令牌，同时也是扩展提交的验证令牌（`qrmaiXXXXXX`） |
 | `p1` / `p2` | 示例坐标 | 微信窗口中「生成二维码」按钮和二维码消息区域的点击位置 |
 | `host` / `port` | 0.0.0.0 / 5000 | 服务监听地址 |
-| `qr_route` | /qrmai | 二维码页面的路由 |
+| `qr_route` | /qrmai | 二维码页面的路由（访问时需带令牌：`{qr_route}?token=<token>`） |
 | `capture_mode` | Linux: hijack / 其他: extension | 捕获模式 |
 | `wechat_bin` | /opt/wechat/wechat | Linux 下微信可执行文件路径（劫持模式） |
 | `wechat_url_timeout` | 5 | 等待微信 URL 的超时时间（秒），扩展模式自动放宽到 ≥15s |
@@ -101,7 +101,7 @@ sequenceDiagram
     participant XDG as 伪 xdg-open 脚本
     participant FIFO as FIFO 管道
 
-    Browser->>Server: GET /qrmai
+    Browser->>Server: GET /qrmai?token=<令牌>
     Server->>Server: 启动后台线程执行 qr_action()
     Server->>Wechat: 点击 P1（生成二维码按钮）
     Server->>Wechat: 点击 P2（二维码消息区域）
@@ -122,7 +122,7 @@ sequenceDiagram
     participant Ext as 浏览器扩展
     participant Cache as QrCache (内存)
 
-    Browser->>Server: GET /qrmai
+    Browser->>Server: GET /qrmai?token=<令牌>
     Server->>Cache: 清空缓存
     Server->>Server: 启动后台线程点击 P1/P2
     Server->>Wechat: 模拟点击（触发打开链接）
@@ -132,7 +132,7 @@ sequenceDiagram
     Server->>Server: fetch_and_decode(url)<br>解码二维码字符串
     Server->>Cache: 写入缓存（字符串 + 时间戳）
     loop 轮询（200ms 间隔，直到超时）
-        Browser->>Server: GET /qrmai（轮询检查缓存）
+        Browser->>Server: GET /qrmai?token=<令牌>（轮询检查缓存）
         Server-->>Browser: 若缓存存在则返回 PNG
     end
 ```

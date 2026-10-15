@@ -82,7 +82,10 @@
                             <label class="block text-base font-medium mb-1" for="qr_route">二维码访问路径</label>
                             <input id="qr_route" name="qr_route" type="text" value="{{ config.qr_route }}"
                                 class="w-full rounded-lg border border-nord-snow-0 dark:border-nord-polar-3 bg-white dark:bg-nord-polar-2 px-3 py-2 text-base focus:ring-2 focus:ring-nord-frost-2 outline-none">
-                            <p class="text-sm text-nord-polar-3 dark:text-nord-snow-1 mt-1">例如 /qrmai、/qrcode</p>
+                            <p class="text-sm text-nord-polar-3 dark:text-nord-snow-1 mt-1">
+                                例如 /qrmai、/qrcode。取码地址必须带令牌（建议直接存为书签）：
+                                <code class="px-1 rounded bg-nord-snow-0 dark:bg-nord-polar-3">http://主机:{{ config.port }}{{ config.qr_route }}?token={{ config.token }}</code>
+                            </p>
                         </div>
                         <div>
                             <label class="block text-base font-medium mb-1" for="cache_duration">二维码缓存秒数</label>
@@ -342,6 +345,7 @@
                         <p>服务端地址：<code class="px-1 rounded bg-nord-snow-0 dark:bg-nord-polar-3">{{ config.host }}:{{ config.port }}</code></p>
                         <p>路由前缀：<code class="px-1 rounded bg-nord-snow-0 dark:bg-nord-polar-3">{{ config.qr_route }}</code></p>
                         <p>访问令牌：<code class="px-1 rounded bg-nord-snow-0 dark:bg-nord-polar-3">{{ config.token }}</code></p>
+                        <p>取码地址：<code class="px-1 rounded bg-nord-snow-0 dark:bg-nord-polar-3">http://主机:{{ config.port }}{{ config.qr_route }}?token={{ config.token }}</code></p>
                     </div>
                 </section>
 
@@ -535,7 +539,9 @@
         // ================= 更新 =================
         function updateStatusHtml(html) {
             var el = document.getElementById('updateStatus');
-            el.innerHTML = html;
+            // 用 textContent 而不是 innerHTML：内容来自 /check_update 的返回值
+            // （GitHub tag_name 等），不应被当作 HTML 解析（安全审计 S-19）
+            el.textContent = html;
             el.classList.remove('hidden');
         }
         document.getElementById('checkUpdateBtn').addEventListener('click', function () {
